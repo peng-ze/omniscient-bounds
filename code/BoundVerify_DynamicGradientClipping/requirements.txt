@@ -1,0 +1,5 @@
+numpy>=1.17.4
+torch>=1.5.0
+torchvision>=0.6.0
+pyhessian==0.1
+backpack-for-pytorch>=1.1.1
