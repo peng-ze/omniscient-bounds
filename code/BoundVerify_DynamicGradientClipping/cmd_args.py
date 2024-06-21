@@ -51,6 +51,9 @@ parser.add_argument("--resume", action="store_true")
 
 parser.add_argument('--name', default='', help='Experiment name')
 
+parser.add_argument("--k", type=int, default=5, help="The number of parallel models for variance estimation")
+parser.add_argument("--p", type=float, default=0.5, help="The relative size of each training set in the parallel trainings for variance estimation")
+
 
 def format_experiment_name(args):
     name = args.name

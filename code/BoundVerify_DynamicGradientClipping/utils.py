@@ -18,6 +18,7 @@ class MyDataset(Dataset):
             else:
                 self.mnist = MNISTRandomLabels(root=args.data_path, train=_train, download=True,
                                                transform=transform, corrupt_prob=args.label_corrupt_prob)
+            args.num_classes = 10
 
         if self.ds == "cifar10":
             normalize = transforms.Normalize(mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
@@ -28,10 +29,11 @@ class MyDataset(Dataset):
                 normalize,
             ])
             if args.label_corrupt_prob == 0:
-                self.cifar10 = datasets.CIFAR10(root=args.data_path, train=_train, download=False, transform=transform)
+                self.cifar10 = datasets.CIFAR10(root=args.data_path, train=_train, download=True, transform=transform)
             else:
                 self.cifar10 = CIFAR10RandomLabels(root=args.data_path, train=_train, download=False,
                                                    transform=transform, corrupt_prob=args.label_corrupt_prob)
+            args.num_classes = 10
 
 
     def __getitem__(self, index):
@@ -49,6 +51,34 @@ class MyDataset(Dataset):
         if self.ds == "cifar10":
             return len(self.cifar10)
 
+class InMemoryDataset(Dataset):
+    def __init__(self, dataset: Dataset, device=None) -> None:
+        super().__init__()
+        self.dataset = dataset
+        self.load_samples()
+        if device is not None:
+            self.load_to_device(device)
+
+    def _load_device(self, d, device='cpu'):
+        if not isinstance(d, tuple) and not isinstance(d, list):
+            return d
+        return [e.to(device) if isinstance(e, torch.Tensor) else e for e in d]
+
+    def load_samples(self):
+        self.samples = [
+            d for d in self.dataset
+        ]
+
+    def load_to_device(self, device):
+        self.samples = [
+            self._load_device(d, device) for d in self.samples
+        ]
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        return self.samples[index]
 
 class MNISTRandomLabels(datasets.MNIST):
     """CIFAR10 dataset, with support for randomly corrupt labels.
@@ -185,3 +215,34 @@ def clip_grad_norm_(parameters, max_norm: float, norm_type: float = 2.0) -> torc
     for p in parameters:
         p.grad.detach().mul_(clip_coef.to(p.grad.device))
     return total_norm
+
+class ClippedLoss(nn.Module):
+    def __init__(self, unreduced_loss: nn.Module, clip, reduction='mean') -> None:
+        super().__init__()
+        self.loss_fn = unreduced_loss
+        self.clip = clip
+        self.reduction = reduction
+
+    def forward(self, *inputs, **kwargs):
+        losses = self.loss_fn(*inputs, **kwargs)
+        clipped_losses = losses.clamp(max=self.clip, min=0) if self.clip is not None else losses
+        if self.reduction == 'mean':
+            res = clipped_losses.mean()
+        elif self.reduction == 'sum':
+            res = clipped_losses.sum()
+        elif self.reduction == 'none':
+            res = clipped_losses
+        else:
+            raise ValueError()
+        return res
+
+def ClippedCrossEntropyLoss(
+    clip=None,
+    weight=None,
+    size_average=None,
+    ignore_index=-100,
+    reduction: str = 'mean',
+    label_smoothing: float = 0,
+):
+    return ClippedLoss(nn.CrossEntropyLoss(weight, size_average, ignore_index, reduce=None, reduction='none', label_smoothing=label_smoothing), clip=clip, reduction=reduction)
+

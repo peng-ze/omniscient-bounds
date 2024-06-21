@@ -2,6 +2,7 @@ import os
 import logging
 import numpy as np
 import torch
+from torch import Tensor
 import torch.nn as nn
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
@@ -16,82 +17,102 @@ import cmd_args
 import time
 import random
 import copy
-from backpack import extend, backpack
-from backpack.extensions import Variance, BatchGrad, BatchL2Grad
+from tqdm.auto import tqdm
+from collections import OrderedDict
+# from backpack import extend, backpack
+# from backpack.extensions import Variance, BatchGrad, BatchL2Grad
+from parallel import ParallelModel, ParallelLoss, make_parallel_datasets, ParallelDataloader
+from bounds import GradientDispersionBound, TerminalDispersionBound, Bound
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 torch.autograd.set_detect_anomaly(True)
 
 
+def accuracy(output: Tensor, targets: Tensor):
+    return (output.argmax(dim=-1) == targets).float().mean()
+
+    
 
 class RunModel:
     def __init__(self, args):
+        import math
+        self.traindataset = None
         self.train_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
+        self.loss_clip = math.log(args.num_classes) * 2
 
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.loss_clip))
+        self.accuracy = ParallelLoss(accuracy, reduction='mean')
+        self.val_criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.loss_clip), reduction='mean')
         self.optimizer = torch.optim.SGD(self.model.parameters(), args.learning_rate,
                                          momentum=args.momentum,
                                          weight_decay=args.weight_decay)
         self.grad_norm = 999999
-        self.losses_all = torch.Tensor([]).to(device)
+        self.losses_all = [] 
         self.sigma = 0
         self.n_iter = 0
-        self.gradient_norm = []
-        self.gradient_variance = []
-        self.mi = 0
+        # self.gradient_norm = []
+        # self.gradient_variance = []
+        # self.mi = 0
         self.clip = args.clip
+
+        self.bounds: 'list[Bound]' = [
+            GradientDispersionBound(), 
+            TerminalDispersionBound(clip=self.clip, flatness=False), 
+            TerminalDispersionBound(clip=self.loss_clip)
+        ]
 
 
     def get_data_model(self, args, shuffle_train=True):
-        traindataset = MyDataset(args, _train=True)
-        testdataset = MyDataset(args, _train=False)
+        self.traindataset = make_parallel_datasets(InMemoryDataset(MyDataset(args, _train=True)), args.k, args.p)
+        testdataset = InMemoryDataset(MyDataset(args, _train=False))
 
-        train_loader = DataLoader(traindataset, batch_size=args.batch_size, shuffle=shuffle_train)
-        test_loader = DataLoader(testdataset, batch_size=512, shuffle=False)
+        train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=4)
+        test_loader = DataLoader(testdataset, batch_size=512, shuffle=False, num_workers=4)
         if args.dataset == "mnist":
             from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
         if args.dataset == "cifar10":
             from archs.cifar10 import AlexNet, LeNet5, fc1, vgg, resnet, densenet
 
-        if args.arch == 'fc1':
-            model = fc1.fc1()
-            # Weight Initialization
-            if args.fixinit:
-                print("loading...")
-                if args.dataset == "mnist":
-                    model.load_state_dict(torch.load('./init/fc1/fc1.pth'))
+        def make_model():
+            if args.arch == 'fc1':
+                model = fc1.fc1()
+                # Weight Initialization
+                if args.fixinit:
+                    print("loading...")
+                    if args.dataset == "mnist":
+                        model.load_state_dict(torch.load('./init/fc1/fc1.pth'))
+                    else:
+                        model.load_state_dict(torch.load('./init/fc1/fc1_cf10.pth'))
                 else:
-                    model.load_state_dict(torch.load('./init/fc1/fc1_cf10.pth'))
-            else:
+                    model.apply(weight_init)
+            if args.arch == 'lenet':
+                model = LeNet5.LeNet5()
+                # if args.dataset == "mnist":
+                #     model.load_state_dict(torch.load('./init/lenet5/lenet5.pth'))
+                # else:
+                #     model.load_state_dict(torch.load('./init/lenet5/lenet5_cf10.pth'))
                 model.apply(weight_init)
-        if args.arch == 'lenet':
-            model = LeNet5.LeNet5()
-            # if args.dataset == "mnist":
-            #     model.load_state_dict(torch.load('./init/lenet5/lenet5.pth'))
-            # else:
-            #     model.load_state_dict(torch.load('./init/lenet5/lenet5_cf10.pth'))
-            model.apply(weight_init)
-        if args.arch == 'alexnet':
-            model = AlexNet.AlexNet()
-            if args.fixinit:
-                print("loading...")
-                if args.dataset == "mnist":
-                    model.load_state_dict(torch.load('./init/alexnet/alexnet.pth'))
+            if args.arch == 'alexnet':
+                model = AlexNet.AlexNet()
+                if args.fixinit:
+                    print("loading...")
+                    if args.dataset == "mnist":
+                        model.load_state_dict(torch.load('./init/alexnet/alexnet.pth'))
+                    else:
+                        model.load_state_dict(torch.load('./init/alexnet/alexnet_cf10.pth'))
                 else:
-                    model.load_state_dict(torch.load('./init/alexnet/alexnet_cf10.pth'))
-            else:
+                    model.apply(weight_init)
+            if args.arch == 'resnet':
+                model = resnet.resnet18()
                 model.apply(weight_init)
-        if args.arch == 'resnet':
-            model = resnet.resnet18()
-            model.apply(weight_init)
-        if args.arch == 'vgg':
-            model = vgg.vgg11()
-            model.apply(weight_init)
-            
-        model = extend(model).to(device)
-        self.n_sample = len(traindataset)
-        self.sample_mi = torch.zeros(self.n_sample)#.to(device)
+            if args.arch == 'vgg':
+                model = vgg.vgg11()
+                model.apply(weight_init)
+            return model
+
+        model = ParallelModel(make_model, k=args.k).to(device)
+        self.n_sample = len(self.traindataset[0])
 
         return train_loader, test_loader, model
 
@@ -103,13 +124,14 @@ class RunModel:
         tr_acces = []
         ts_losses = []
         ts_acces = []
+        logging.info('  '.join([f'{bound.name}_traj: {bound.trajectory_term(self.model):.3f}' for bound in self.bounds]))
 
         for self.epoch in range(start_epoch, epochs):
             t = time.time()
             # if args.ad_lr:
             #     adjust_learning_rate(optimizer, epoch, args)
             # train for one epoch
-            _, _, grad_var, grad_norm = self.train_epoch(args, self.train_loader)
+            self.train_epoch(args, self.train_loader)
 
             tr_loss, train_acc = self.validate_test(self.train_loader, self.model, args)
             # evaluate on validation set
@@ -121,9 +143,9 @@ class RunModel:
             ts_acces.append(test_acc)
 
             logging.info('%03d: L-tr: %.3f  L-ts: %.3f  gap: %.3f | Acc-train: %.2f Acc-test: %.2f Error-test: %.2f '
-                         '| Grad-Var: %.3f  Grad-Norm  %.3f  | Time: %2.1f s ',
-                         self.epoch, tr_loss, ts_loss, ts_loss - tr_loss, train_acc, test_acc, 100-test_acc, grad_var,
-                         grad_norm, (time.time() - t))
+                         '| ' + '  '.join([f'{bound.name}_traj: {bound.trajectory_term(self.model):.3e}' for bound in self.bounds]) + ' | Time: %2.1f s ',
+                         self.epoch, tr_loss, ts_loss, ts_loss - tr_loss, train_acc, test_acc, 100-test_acc,
+                          (time.time() - t))
 
             if args.early_stop and self.epoch > 0:
                 if tr_loss <= 0.0005:
@@ -135,39 +157,44 @@ class RunModel:
 
     def train_epoch(self, args, train_loader):
         # """Train for one epoch on the training set"""
-        losses = AverageMeter()
-        norm_mean = AverageMeter()
-        variance_mean = AverageMeter()
-        batch_mean = AverageMeter()
+        # losses = AverageMeter()
+        # norm_mean = AverageMeter()
+        # variance_mean = AverageMeter()
+        # batch_mean = AverageMeter()
         self.model.train()
-        for batch_idx, data in enumerate(train_loader):
+        for batch_idx, data in enumerate(tqdm(train_loader)):
             inputs, labels, idx = data
-            loss, norm, variance, batch_norm = self.train_batch(inputs, labels, idx, args)
-            losses.update(loss.item(), inputs.size(0))
-            norm_mean.update(norm, inputs.size(0))
-            variance_mean.update(variance, inputs.size(0))
-            batch_mean.update(batch_norm)
-        return losses.avg, norm_mean.avg, variance_mean.avg, batch_mean.avg
+            # loss, norm, variance, batch_norm = 
+            self.train_batch(inputs, labels, idx, args)
+            # losses.update(loss.item(), inputs.size(0))
+            # norm_mean.update(norm, inputs.size(0))
+            # variance_mean.update(variance, inputs.size(0))
+            # batch_mean.update(batch_norm)
+        # return losses.avg, norm_mean.avg, variance_mean.avg, batch_mean.avg
 
     def train_batch(self, imgs, targets, idx, args):
 
         self.model.zero_grad()
         self.optimizer.zero_grad()
 
-        imgs, targets = imgs.to(device), targets.to(device)
+        if not isinstance(imgs, Tensor):
+            imgs = [d.to(device) for d in imgs]
+            targets = [d.to(device) for d in targets]
+        else:
+            imgs, targets = imgs.to(device), targets.to(device)
         output = self.model(imgs)
         train_loss = self.criterion(output, targets)
-        with backpack(Variance(), BatchL2Grad()):
-            train_loss.backward()
-        sample_grad_norm = torch.zeros(imgs.shape[0])
-        batch_gradient_norm = torch.tensor(0.0)
-        var = 0
-        for param in self.model.parameters():
-            var = var + ((imgs.shape[0]**2) * param.variance).sum()
-            sample_grad_norm += param.batch_l2.cpu() * (imgs.shape[0] ** 2)
-            batch_gradient_norm += param.grad.data.norm(2).square().cpu()
-        max_grad_norm = batch_gradient_norm.sqrt()
+        train_loss.backward()
+        # sample_grad_norm = torch.zeros(imgs.shape[0])
+        # batch_gradient_norm = torch.tensor(0.0)
+        # var = 0
+        # for param in self.model.parameters():
+            # var = var + ((imgs.shape[0]**2) * param.variance).sum()
+            # sample_grad_norm += param.batch_l2.cpu() * (imgs.shape[0] ** 2)
+            # batch_gradient_norm += param.grad.data.norm(2).square().cpu()
+        # max_grad_norm = batch_gradient_norm.sqrt()
         if self.clip > 0 and self.epoch > args.clip_start:
+            raise NotImplemented()
             if self.grad_norm < max_grad_norm:
                 # torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
                 clip_grad_norm_(self.model.parameters(), self.clip)
@@ -176,65 +203,90 @@ class RunModel:
                 self.clip = args.clip_factor * self.grad_norm
             else:
                 self.grad_norm = max_grad_norm
+        for bound in self.bounds:
+            bound.update(self.model, lr=self.optimizer.param_groups[0]['lr'])
         self.optimizer.step()
-        self.sample_mi[idx] += var.cpu()
-        self.mi += var.item()
+        # self.sample_mi[idx] += var.cpu()
+        # self.mi += var.item()
         # self.sample_mi[range(self.n_sample) != idx] *= 1
 
-        # with torch.no_grad():
-            # loss_fn = nn.CrossEntropyLoss(reduction='none')
-            # self.losses_all = torch.cat((self.losses_all, loss_fn(output, targets)))
+        with torch.no_grad():
+            loss_fn = ClippedCrossEntropyLoss(clip=self.loss_clip, reduction='none')
+            self.losses_all.append(loss_fn(torch.cat(output), torch.cat(targets)).flatten())
         self.n_iter += 1
-        self.gradient_norm.append(max_grad_norm.item())
-        self.gradient_variance.append(var.item())
-        return train_loss, sample_grad_norm.sqrt().mean().item(),  var.item(), max_grad_norm.item()
+        # self.gradient_norm.append(max_grad_norm.item())
+        # self.gradient_variance.append(var.item())
+        # return train_loss, sample_grad_norm.sqrt().mean().item(),  var.item(), max_grad_norm.item()
+        self.model.zero_grad()
+        self.optimizer.zero_grad()
 
     def validate_test(self, val_loader, model, args):
         model.eval()
         test_loss = AverageMeter()
-        correct = 0
+        accuracy = AverageMeter()
         with torch.no_grad():
             for data, target, _ in val_loader:
-                data, target = data.to(device), target.to(device)
+                if isinstance(data, Tensor):
+                    data, target = data.to(device), target.to(device)
+                    n = len(data)
+                else:
+                    data = [d.to(device) for d in data]
+                    target = [t.to(device) for t in target]
+                    n = len(data[0])
                 output = model(data)
-                loss = self.criterion(output, target)
-                pred = output.data.max(1, keepdim=True)[1]  # get the index of the max log-probability
-                correct += pred.eq(target.data.view_as(pred)).sum().item()
-                test_loss.update(loss.item(), data.size(0))
-            accuracy = 100. * correct / len(val_loader.dataset)
-        return test_loss.avg, accuracy
+                loss = self.val_criterion(output, target)
+                test_loss.update(loss.item(), n)
+                accuracy.update(self.accuracy(output, target).item(), n)
+        return test_loss.avg, accuracy.avg * 100
 
     def compute_hessian(self, args):
-        traindataset = MyDataset(args, _train=True)
-        train_loader = DataLoader(traindataset, batch_size=self.n_sample//10, shuffle=True)
-        self.model.eval()
+        train_loader = ParallelDataloader(self.traindataset, batch_size=self.n_sample//10, shuffle=True)
+        # self.model.eval()
 
-        for inputs, targets, _ in train_loader:
-            break
-        inputs, targets = inputs.to(device), targets.to(device)
-
-        hessian_comp = hessian(self.model, self.criterion, data=(inputs, targets), cuda=True)
-        trace = hessian_comp.trace()
-        return np.mean(trace)
+        hessian_traces = AverageMeter()
+        for (model, loader) in zip(self.model.models, train_loader.loaders): 
+            inputs, targets, _ = next(iter(loader))
+            inputs, targets = inputs.to(device), targets.to(device)
+            hessian_comp = hessian(model, ClippedCrossEntropyLoss(clip=self.loss_clip), data=(inputs, targets), cuda=True)
+            trace = hessian_comp.trace()
+            hessian_traces.update(float(np.mean(trace)), n=1)
+        return hessian_traces.avg 
 
     def compute_bound(self, args):
+        self.model.train()
         if args.proxy:
             std_fit = self.fit_subGaussian()
             std_proxy = std_fit
         else:
-            std_proxy = 0.1
-        variance_term = args.learning_rate / (args.batch_size*
-                    self.n_sample) * self.sample_mi.sqrt().sum()
-        variance_term2 = args.learning_rate * (1 / (args.batch_size * self.n_sample) * self.mi)**(1/2)
-        A = 2 * std_proxy * variance_term
-        A2 = 2 * std_proxy * variance_term2
+            device = next(self.model.parameters()).device
+            std_proxy = torch.tensor([self.loss_clip / 2], device=device) 
         hessian_term = 1 / 2 * self.compute_hessian(args)
-        B = self.n_iter * hessian_term
-        bound = 3*((A/2)**(2/3)) * (B ** (1/3))
-        bound2 = 3*((A2/2)**(2/3)) * (B ** (1/3))
-        return variance_term.item(), hessian_term, A.item(), B,  bound.item(), variance_term2, A2,  bound2.item()
+        results = []
+        for bound in self.bounds:
+            C = 3/2 * (std_proxy**2 / self.n_sample * 2 * hessian_term)**(1/3)
+            trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_loader, self.test_loader)
+            if new_hessian_trace is not None:
+                hessian_term = new_hessian_trace / 2
+            A = (std_proxy**2 / self.n_sample * trajectory_term).sqrt()
+            B = self.n_iter * hessian_term
+            best_sigma = (A / (2 * B))**(1/3)
+            bound_value = 3 * ((A/2)**(2/3)) * (B ** (1/3)) + punishment 
+            bound.computed_value = bound_value
+
+            res = OrderedDict()
+            res['name'] = bound.name
+            res['best_sigma'] = float(best_sigma)
+            res['trajectory_term'] = float(A / best_sigma)
+            res['flatness_term'] = float(best_sigma ** 2 * B)
+            res['punishment'] = float(punishment)
+            for k, v in extra_info.items():
+                res[k] = v
+            res['bound'] = bound_value
+            results.append(res)
+        return results
 
     def fit_subGaussian(self):
+        losses_all = torch.cat(self.losses_all).flatten()
         train_x = 0.5
         # create model
         model_ = gaussian_net(5).to(device)
@@ -243,7 +295,7 @@ class RunModel:
         total_iters = 10000
         for i in range(total_iters):
             dist, _, _ = model_.forward(torch.ones(1, 1).to(device) * train_x)
-            likelihood = dist.log_prob(self.losses_all)
+            likelihood = dist.log_prob(losses_all)
             loss = (-likelihood).sum()
             optimizer_.zero_grad()
             loss.backward()
@@ -279,17 +331,17 @@ def main():
 
     runmodel = RunModel(args)
     logging.info(f'Model: {args.arch}   Dataset: {args.dataset}  lr: {args.learning_rate}   batch size: {args.batch_size} '
-                 f' Corrupt level: {args.label_corrupt_prob}  width: {args.width} Clip factor: {args.clip_factor} Clip start: {args.clip_start} Clip stratagy: {args.stra}')
-    logging.info('Number of parameters: %d', sum([p.data.nelement() for p in runmodel.model.parameters()]))
+                 f' Corrupt level: {args.label_corrupt_prob}  width: {args.width} Clip factor: {args.clip_factor} Clip start: {args.clip_start} Clip stratagy: {args.stra} ' 
+                 f' Trajectory samples: {args.k}')
+    logging.info('Number of parameters: %d', sum([p.data.nelement() for p in runmodel.model.parameters()]) // args.k)
 
     tr_losses, tr_acces, ts_losses, ts_acces = runmodel.train_model(args)
 
-    variance_term, hessian_term, first_term, second_term, bound, variance_term2, first_term2, bound2 = runmodel.compute_bound(
-        args)
-    logging.info('Variance Term: %.5f  Hessian Term: %.3f First Term: %.5f  Second Term: %.3f  bound: %.3f  ',
-                 variance_term, hessian_term, first_term, second_term, bound)
-    logging.info('Variance Term2: %.5f First Term2: %.5f  bound2: %.3f  ',
-                 variance_term2, first_term2, bound2)
+    results = runmodel.compute_bound(args)
+    for res in results:
+        logging.info(
+            '  '.join([f'{k}: {v}' for k, v in res.items()])
+        )
 
     # plt.title('Loss')
     # plt.plot(np.arange(len(tr_losses)), tr_losses, color='green', linewidth=2.0, linestyle='-', label='Train')
