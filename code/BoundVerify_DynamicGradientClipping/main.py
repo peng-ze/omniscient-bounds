@@ -59,7 +59,10 @@ class RunModel:
         self.bounds: 'list[Bound]' = [
             GradientDispersionBound(), 
             TerminalDispersionBound(clip=self.clip, flatness=False), 
-            TerminalDispersionBound(clip=self.loss_clip)
+            # TerminalDispersionBound(clip=self.loss_clip),
+            # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
+            TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True),
+            # TerminalDispersionBound(clip=self.loss_clip, unbiased=True, trajectories_for_opt=args.trajectories_for_optimization)
         ]
 
 
@@ -67,8 +70,8 @@ class RunModel:
         self.traindataset = make_parallel_datasets(InMemoryDataset(MyDataset(args, _train=True)), args.k, args.p)
         testdataset = InMemoryDataset(MyDataset(args, _train=False))
 
-        train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=4)
-        test_loader = DataLoader(testdataset, batch_size=512, shuffle=False, num_workers=4)
+        train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=4, pin_memory=True, persistent_workers=True)
+        test_loader = DataLoader(testdataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
         if args.dataset == "mnist":
             from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
         if args.dataset == "cifar10":
@@ -124,7 +127,7 @@ class RunModel:
         tr_acces = []
         ts_losses = []
         ts_acces = []
-        logging.info('  '.join([f'{bound.name}_traj: {bound.trajectory_term(self.model):.3f}' for bound in self.bounds]))
+        logging.info('  '.join([f'{bound.name}.traj: {bound.trajectory_term(self.model):.3f}' for bound in self.bounds]))
 
         for self.epoch in range(start_epoch, epochs):
             t = time.time()
@@ -133,19 +136,20 @@ class RunModel:
             # train for one epoch
             self.train_epoch(args, self.train_loader)
 
-            tr_loss, train_acc = self.validate_test(self.train_loader, self.model, args)
-            # evaluate on validation set
-            ts_loss, test_acc = self.validate_test(self.test_loader, self.model, args)
+            if (self.epoch + 1) % args.test_freq == 0 or self.epoch == epochs - 1:
+                tr_loss, train_acc = self.validate_test(self.train_loader, self.model, args)
+                # evaluate on validation set
+                ts_loss, test_acc = self.validate_test(self.test_loader, self.model, args)
 
-            tr_losses.append(tr_loss)
-            tr_acces.append(train_acc)
-            ts_losses.append(ts_loss)
-            ts_acces.append(test_acc)
+                tr_losses.append(tr_loss)
+                tr_acces.append(train_acc)
+                ts_losses.append(ts_loss)
+                ts_acces.append(test_acc)
 
-            logging.info('%03d: L-tr: %.3f  L-ts: %.3f  gap: %.3f | Acc-train: %.2f Acc-test: %.2f Error-test: %.2f '
-                         '| ' + '  '.join([f'{bound.name}_traj: {bound.trajectory_term(self.model):.3e}' for bound in self.bounds]) + ' | Time: %2.1f s ',
-                         self.epoch, tr_loss, ts_loss, ts_loss - tr_loss, train_acc, test_acc, 100-test_acc,
-                          (time.time() - t))
+                logging.info('%03d: L-tr: %.3f  L-ts: %.3f  gap: %.3f | Acc-train: %.2f Acc-test: %.2f Error-test: %.2f '
+                            '| ' + '  '.join([f'{bound.name}.traj: {bound.trajectory_term(self.model):.3e}' for bound in self.bounds]) + ' | Time: %2.1f s ',
+                            self.epoch, tr_loss, ts_loss, ts_loss - tr_loss, train_acc, test_acc, 100-test_acc,
+                            (time.time() - t))
 
             if args.early_stop and self.epoch > 0:
                 if tr_loss <= 0.0005:
@@ -243,14 +247,14 @@ class RunModel:
         train_loader = ParallelDataloader(self.traindataset, batch_size=self.n_sample//10, shuffle=True)
         # self.model.eval()
 
-        hessian_traces = AverageMeter()
+        hessian_traces: list[float] = []
         for (model, loader) in zip(self.model.models, train_loader.loaders): 
             inputs, targets, _ = next(iter(loader))
             inputs, targets = inputs.to(device), targets.to(device)
             hessian_comp = hessian(model, ClippedCrossEntropyLoss(clip=self.loss_clip), data=(inputs, targets), cuda=True)
             trace = hessian_comp.trace()
-            hessian_traces.update(float(np.mean(trace)), n=1)
-        return hessian_traces.avg 
+            hessian_traces.append(float(np.mean(trace)))
+        return hessian_traces 
 
     def compute_bound(self, args):
         self.model.train()
@@ -260,10 +264,11 @@ class RunModel:
         else:
             device = next(self.model.parameters()).device
             std_proxy = torch.tensor([self.loss_clip / 2], device=device) 
-        hessian_term = 1 / 2 * self.compute_hessian(args)
+        hessian_traces = self.compute_hessian(args)
+        hessian_term = 1 / 2 * sum(hessian_traces) / len(hessian_traces)
         results = []
         for bound in self.bounds:
-            C = 3/2 * (std_proxy**2 / self.n_sample * 2 * hessian_term)**(1/3)
+            C = [3/2 * (std_proxy**2 / self.n_sample * h)**(1/3) for h in hessian_traces]
             trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_loader, self.test_loader)
             if new_hessian_trace is not None:
                 hessian_term = new_hessian_trace / 2

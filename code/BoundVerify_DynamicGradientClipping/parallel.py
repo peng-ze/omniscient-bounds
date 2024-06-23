@@ -32,7 +32,7 @@ class ParallelModel(nn.Module):
 
     # dispersions
     @torch.no_grad()
-    def terminal_dispersion(self, delta: Tensor=None):
+    def terminal_dispersion(self, delta: Tensor=None, cross_dispersion=False, full_utilization=False):
         """
             Assuming models are intialized the same.
         """
@@ -42,10 +42,30 @@ class ParallelModel(nn.Module):
                 tensor_ps = torch.stack([p.flatten() for p in ps], dim=0) 
                 var = tensor_ps.var(dim=0)
                 res += var.sum()
+        # elif unbiased:
+            # p = torch.stack([torch.cat([p.flatten() for p in m.parameters()]) for m in self.models], dim=0)[:len(delta)]
+            # mean = p.mean(dim=0, keepdim=True)
+            # unbiased = p.var(dim=0).sum() - 2 * (torch.inner(p, delta).mean() - torch.inner(mean.squeeze(dim=0), delta.mean(dim=0))) + delta.square().sum(dim=-1).mean()
+            # biased = (p - mean - delta).square().mean(dim=0).sum()
+            # print(unbiased, biased)
+            # return unbiased
         else:
             p = torch.stack([torch.cat([p.flatten() for p in m.parameters()]) for m in self.models], dim=0)
-            mean = p.mean(dim=0, keepdim=True)
-            res = (p - mean - delta).square().mean(dim=0).sum()
+            if cross_dispersion:
+                if full_utilization:
+                    sum = p.sum(dim=0, keepdim=True)
+                    mean = (sum - p) / (len(p) - 1) 
+                    p = p.unsqueeze(dim=1)
+                    mean = mean.unsqueeze(dim=1)
+                else:
+                    p = p.unflatten(dim=0, sizes=[2, -1])
+                    mean = p.mean(dim=1, keepdim=True)[[1, 0]]
+            else:
+                p = p.unsqueeze(dim=0)
+                mean = p.mean(dim=1, keepdim=True)
+
+            delta = delta.reshape(p.shape)
+            res = (p - mean - delta).square().flatten(0, 1).mean(dim=0).sum()
         return res
 
     @torch.no_grad()

@@ -33,7 +33,7 @@ def iHVP(parallel_model: ParallelModel, hessians:'list[list[Union[Tuple[DataLoad
         vs = [[torch.zeros_like(p) for p in m] for m in b]
         rs = [[p + 0 for p in m] for m in b]
         ps = [[p + 0 for p in m] for m in b]
-        done = [False for _ in range(len(parallel_model))]
+        done = [False for _ in range(min(len(parallel_model), len(b)))]
     
     hessians = [[((hessian(parallel_model.models[model_index], ClippedCrossEntropyLoss(clip=clip), dataloader=term[0], cuda=True), term[1]) if isinstance(term, tuple) else term) for term in m] for model_index, m in enumerate(hessians)]
 

@@ -30,6 +30,7 @@ parser.add_argument('--clip', type=float, default=0)
 parser.add_argument('--clip_factor', type=float, default=0.1)
 parser.add_argument('--stra', type=int, default=1)
 parser.add_argument('--clip_start', type=int, default=0)
+parser.add_argument('--test-freq', type=int, default=1)
 
 parser.add_argument('--ad_lr', type=bool, default=False,
                     help='Whether to adjust learning_rate')
@@ -53,6 +54,7 @@ parser.add_argument('--name', default='', help='Experiment name')
 
 parser.add_argument("--k", type=int, default=5, help="The number of parallel models for variance estimation")
 parser.add_argument("--p", type=float, default=0.5, help="The relative size of each training set in the parallel trainings for variance estimation")
+parser.add_argument("--trajectories-for-optimization", type=int, default=3)
 
 
 def format_experiment_name(args):
