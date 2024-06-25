@@ -1,0 +1,7 @@
+{
+    "files.watcherExclude": {
+        "**/__pycache__/**": true,
+        "**/data/**": true,
+        "**/runs/**": true
+    }
+}

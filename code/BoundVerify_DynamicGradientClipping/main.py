@@ -337,7 +337,7 @@ def main():
     runmodel = RunModel(args)
     logging.info(f'Model: {args.arch}   Dataset: {args.dataset}  lr: {args.learning_rate}   batch size: {args.batch_size} '
                  f' Corrupt level: {args.label_corrupt_prob}  width: {args.width} Clip factor: {args.clip_factor} Clip start: {args.clip_start} Clip stratagy: {args.stra} ' 
-                 f' Trajectory samples: {args.k}')
+                 f' Trajectory samples: {args.k}  Seed: {seed}')
     logging.info('Number of parameters: %d', sum([p.data.nelement() for p in runmodel.model.parameters()]) // args.k)
 
     tr_losses, tr_acces, ts_losses, ts_acces = runmodel.train_model(args)

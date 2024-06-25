@@ -15,10 +15,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--command', default='train', choices=['train'])
 parser.add_argument('--dataset', default='mnist', choices=['mnist','cifar10'])
 parser.add_argument('--num-classes', type=int, default=10)
-parser.add_argument('--data-path', default='./datasets')
+parser.add_argument('--data-path', default='./data')
 parser.add_argument('--label-corrupt-prob', type=float, default=0)
 
-parser.add_argument('--seed', type=int, default=1)
+parser.add_argument('--seed', type=int, default=None)
 parser.add_argument('--batch-size', type=int, default=60)
 parser.add_argument('--epochs', type=int, default=30)
 parser.add_argument('--bound-epoch', type=int, default=29)
@@ -67,15 +67,21 @@ def format_experiment_name(args):
 
     name += args.arch
     name += '_lr{0}_bs{1}'.format(args.learning_rate, args.batch_size)
+    name += f'_width{args.width}'
     if args.weight_decay > 0:
         name += '_Wd{0}'.format(args.weight_decay)
     else:
         name += '_NoWd'
 
+    name += f'_seed{args.seed}'
+
     return name
 
 
 def parse_args():
+    import random
     args = parser.parse_args()
+    if args.seed is None:
+        args.seed  =random.randint(0, 100000)
     args.exp_name = format_experiment_name(args)
     return args
