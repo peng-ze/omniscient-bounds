@@ -52,9 +52,8 @@ parser.add_argument("--resume", action="store_true")
 
 parser.add_argument('--name', default='', help='Experiment name')
 
-parser.add_argument("--k", type=int, default=5, help="The number of parallel models for variance estimation")
-parser.add_argument("--p", type=float, default=0.5, help="The relative size of each training set in the parallel trainings for variance estimation")
-parser.add_argument("--trajectories-for-optimization", type=int, default=3)
+parser.add_argument("--k", "-k", "--parapllel-models", type=int, default=5, help="The number of parallel models for variance estimation")
+parser.add_argument("--loss-upperbound", type=float, default=2.0, help="The scaling factor in the upperbound of Clipped Cross Entropy Loss. Setting this value to u will set the upperbound to u * log C, where C is the number of classes.")
 
 
 def format_experiment_name(args):

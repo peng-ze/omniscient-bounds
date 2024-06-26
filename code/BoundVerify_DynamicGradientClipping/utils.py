@@ -6,6 +6,7 @@ import torch.nn.init as init
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 import os
+from typing import Iterable
 
 class MyDataset(Dataset):
     def __init__(self, args, _train=True):
@@ -79,6 +80,26 @@ class InMemoryDataset(Dataset):
 
     def __getitem__(self, index):
         return self.samples[index]
+
+class AugmentationDataset(Dataset):
+    def __init__(self, dataset: Dataset, transform=lambda x:x, target_transform=lambda x:x) -> None:
+        super().__init__()
+        self.dataset = dataset
+        self.transform = transform
+        self.target_transform = target_transform 
+
+    def do_transform(self, Z, transform):
+        if isinstance(Z, torch.Tensor) or isinstance(Z, int):
+            return transform(Z)
+        return [self.do_transform(z, transform) for z in Z]
+
+    def __len__(self):  return len(self.dataset)
+    
+    def __getitem__(self, index):
+        data = list(self.dataset[index])
+        X = data[0]; Y = data[1]
+        return self.do_transform(X, self.transform), self.do_transform(Y, self.target_transform), *data[2:]
+
 
 class MNISTRandomLabels(datasets.MNIST):
     """CIFAR10 dataset, with support for randomly corrupt labels.

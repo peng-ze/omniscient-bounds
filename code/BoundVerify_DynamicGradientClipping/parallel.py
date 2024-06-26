@@ -100,7 +100,7 @@ class ParallelLoss(nn.Module):
             targets = [targets] * len(output)
         return self.reduction([self.loss_fn(*input) for input in zip(output, targets, *inputs)])
 
-def make_parallel_datasets(dataset: torch.utils.data.Dataset, k: int, p: float) -> 'list[torch.utils.data.Dataset]':
+def make_parallel_datasets(dataset: torch.utils.data.Dataset, k: int) -> 'list[torch.utils.data.Dataset]':
     return torch.utils.data.random_split(dataset, lengths=[1/k]*k)
     return [
         torch.utils.data.Subset(dataset, torch.randint(0, len(dataset), [int(p*len(dataset))]))

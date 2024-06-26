@@ -9,18 +9,14 @@ import torchvision.datasets as datasets
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.distributions import Normal
-# import matplotlib.pyplot as plt
 from pyhessian import hessian  # Hessian computation
 from utils import *
 from FitsubGaussian import gaussian_net
 import cmd_args
 import time
 import random
-import copy
 from tqdm.auto import tqdm
 from collections import OrderedDict
-# from backpack import extend, backpack
-# from backpack.extensions import Variance, BatchGrad, BatchL2Grad
 from parallel import ParallelModel, ParallelLoss, make_parallel_datasets, ParallelDataloader
 from bounds import GradientDispersionBound, TerminalDispersionBound, Bound
 
@@ -38,8 +34,8 @@ class RunModel:
     def __init__(self, args):
         import math
         self.traindataset = None
-        self.train_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
-        self.loss_clip = math.log(args.num_classes) * 2
+        self.train_loader, self.train_test_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
+        self.loss_clip = math.log(args.num_classes) * args.loss_upperbound
 
         self.criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.loss_clip))
         self.accuracy = ParallelLoss(accuracy, reduction='mean')
@@ -67,10 +63,19 @@ class RunModel:
 
 
     def get_data_model(self, args, shuffle_train=True):
-        self.traindataset = make_parallel_datasets(InMemoryDataset(MyDataset(args, _train=True)), args.k, args.p)
+        training_data = make_parallel_datasets(InMemoryDataset(MyDataset(args, _train=True)), args.k)
+        self.plain_train_dataset = training_data
+        self.traindataset = [AugmentationDataset(d, transform=(transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomResizedCrop(32)
+        ]) if 'cifar' in args.dataset else lambda x:x)) for d in training_data]
+
+        train_test_dataset = training_data 
+
         testdataset = InMemoryDataset(MyDataset(args, _train=False))
 
         train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=4, pin_memory=True, persistent_workers=True)
+        train_test_loader = ParallelDataloader(train_test_dataset, batch_size=512, num_workers=4, pin_memory=True, persistent_workers=True)
         test_loader = DataLoader(testdataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
         if args.dataset == "mnist":
             from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
@@ -115,9 +120,9 @@ class RunModel:
             return model
 
         model = ParallelModel(make_model, k=args.k).to(device)
-        self.n_sample = len(self.traindataset[0])
+        self.n_sample = len(self.plain_train_dataset[0])
 
-        return train_loader, test_loader, model
+        return train_loader, train_test_loader, test_loader, model
 
     def train_model(self, args, start_epoch=None, epochs=None):
         torch.backends.cudnn.benchmark = True
@@ -137,7 +142,7 @@ class RunModel:
             self.train_epoch(args, self.train_loader)
 
             if (self.epoch + 1) % args.test_freq == 0 or self.epoch == epochs - 1:
-                tr_loss, train_acc = self.validate_test(self.train_loader, self.model, args)
+                tr_loss, train_acc = self.validate_test(self.train_test_loader, self.model, args)
                 # evaluate on validation set
                 ts_loss, test_acc = self.validate_test(self.test_loader, self.model, args)
 
@@ -244,7 +249,7 @@ class RunModel:
         return test_loss.avg, accuracy.avg * 100
 
     def compute_hessian(self, args):
-        train_loader = ParallelDataloader(self.traindataset, batch_size=self.n_sample//10, shuffle=True)
+        train_loader = ParallelDataloader(self.plain_train_dataset, batch_size=self.n_sample//10, shuffle=True)
         # self.model.eval()
 
         hessian_traces: list[float] = []
@@ -269,7 +274,7 @@ class RunModel:
         results = []
         for bound in self.bounds:
             C = [3/2 * (std_proxy**2 / self.n_sample * h)**(1/3) for h in hessian_traces]
-            trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_loader, self.test_loader)
+            trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_test_loader, self.test_loader)
             if new_hessian_trace is not None:
                 hessian_term = new_hessian_trace / 2
             A = (std_proxy**2 / self.n_sample * trajectory_term).sqrt()
