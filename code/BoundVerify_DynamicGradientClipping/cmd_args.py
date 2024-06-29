@@ -48,7 +48,7 @@ parser.add_argument('--arch', default='fc1', choices=['fc1', 'lenet', 'alexnet',
 
 parser.add_argument("--print_freq", default=1, type=int)
 parser.add_argument("--valid_freq", default=1, type=int)
-parser.add_argument("--resume", action="store_true")
+parser.add_argument("--resume", type=str, default=None)
 
 parser.add_argument('--name', default='', help='Experiment name')
 

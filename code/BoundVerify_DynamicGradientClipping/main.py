@@ -1,5 +1,6 @@
 import os
 import logging
+import datetime
 import numpy as np
 import torch
 from torch import Tensor
@@ -30,8 +31,9 @@ def accuracy(output: Tensor, targets: Tensor):
 
     
 
-class RunModel:
+class RunModel(nn.Module):
     def __init__(self, args):
+        super().__init__()
         import math
         self.traindataset = None
         self.train_loader, self.train_test_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
@@ -52,14 +54,14 @@ class RunModel:
         # self.mi = 0
         self.clip = args.clip
 
-        self.bounds: 'list[Bound]' = [
+        self.bounds: 'list[Bound]' = nn.ModuleList([
             GradientDispersionBound(), 
             TerminalDispersionBound(clip=self.clip, flatness=False), 
             # TerminalDispersionBound(clip=self.loss_clip),
             # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
             TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True),
             # TerminalDispersionBound(clip=self.loss_clip, unbiased=True, trajectories_for_opt=args.trajectories_for_optimization)
-        ]
+        ])
 
 
     def get_data_model(self, args, shuffle_train=True):
@@ -258,6 +260,7 @@ class RunModel:
             inputs, targets = inputs.to(device), targets.to(device)
             hessian_comp = hessian(model, ClippedCrossEntropyLoss(clip=self.loss_clip), data=(inputs, targets), cuda=True)
             trace = hessian_comp.trace()
+            model.zero_grad()
             hessian_traces.append(float(np.mean(trace)))
         return hessian_traces 
 
@@ -317,35 +320,44 @@ class RunModel:
 
 
 def setup_logging(args):
-    import datetime
     exp_dir = os.path.join('runs', args.exp_name)
     if not os.path.isdir(exp_dir):
         os.makedirs(exp_dir)
-    log_fn = os.path.join(exp_dir, "LOG.{0}.txt".format(datetime.date.today().strftime("%y%m%d")))
-    logging.basicConfig(filename=log_fn, filemode='w', level=logging.DEBUG)
+    id = args.resume if args.resume is not None else datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_fn = os.path.join(exp_dir, "LOG.{0}.txt".format(id))
+    logging.basicConfig(filename=log_fn, filemode='a', level=logging.DEBUG)
     # also log into console
     console = logging.StreamHandler()
     console.setLevel(logging.INFO)
     logging.getLogger('').addHandler(console)
-    print('Logging into %s...' % exp_dir)
+    print(f'Logging into {exp_dir}/{id}...')
+
+    return exp_dir, id
 
 
 def main():
     args = cmd_args.parse_args()
-    setup_logging(args)
+    exp_dir, id = setup_logging(args)
     seed = args.seed
     torch.manual_seed(seed)  # cpu
     torch.cuda.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
 
-    runmodel = RunModel(args)
+    runmodel = RunModel(args).to(device)
     logging.info(f'Model: {args.arch}   Dataset: {args.dataset}  lr: {args.learning_rate}   batch size: {args.batch_size} '
                  f' Corrupt level: {args.label_corrupt_prob}  width: {args.width} Clip factor: {args.clip_factor} Clip start: {args.clip_start} Clip stratagy: {args.stra} ' 
                  f' Trajectory samples: {args.k}  Seed: {seed}')
     logging.info('Number of parameters: %d', sum([p.data.nelement() for p in runmodel.model.parameters()]) // args.k)
 
-    tr_losses, tr_acces, ts_losses, ts_acces = runmodel.train_model(args)
+    if args.resume is None:
+        tr_losses, tr_acces, ts_losses, ts_acces = runmodel.train_model(args)
+        torch.save(runmodel.state_dict(), os.path.join(exp_dir, id + '.pth'))
+    else:
+        logging.info(f"Loading from {exp_dir}/{id}.pth")
+        state_dict = torch.load(os.path.join(exp_dir, id + '.pth'))
+        runmodel.load_state_dict(state_dict, strict=True)
+        state_dict = None
 
     results = runmodel.compute_bound(args)
     for res in results:

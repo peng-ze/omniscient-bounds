@@ -9,9 +9,10 @@ from utils import ClippedCrossEntropyLoss
 from tqdm.auto import tqdm
 
 
-class Bound:
+class Bound(nn.Module):
     name: str = None
     def __init__(self) -> None:
+        super().__init__()
         self.computed_value = None
     @abstractmethod
     def update(self, parallel_model: ParallelModel, lr: float, *args, **kwargs):
@@ -24,51 +25,62 @@ class Bound:
         pass
     
     def forget(self, C: float, parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, test_data_loader: DataLoader):
-        return self.trajectory_term(parallel_model), 0, None, {}
+        return float(self.trajectory_term(parallel_model)), 0, None, {}
 
 class GradientDispersionBound(Bound):
     name = "gradient_dispersion"
     def __init__(self) -> None:
         super().__init__()
-        self.n_iter = 0
-        self.gradient_dispersion = 0.0
+        self._n_iter = nn.Parameter(torch.zeros([1], dtype=torch.int), requires_grad=False)
+        self._gradient_dispersion = nn.Parameter(torch.zeros([1]), requires_grad=False) 
+
+    @property
+    def n_iter(self):
+        return self._n_iter.data
+    @property
+    def gradient_dispersion(self):
+        return self._gradient_dispersion.data
 
     @torch.no_grad()
     def update(self, parallel_model: ParallelModel, lr: float, *args, **kwargs):
-        self.gradient_dispersion += (lr ** 2) * parallel_model.gradient_dispersion()
-        self.n_iter += 1
+        self._gradient_dispersion.data += (lr ** 2) * parallel_model.gradient_dispersion().detach()
+        self._n_iter.data += 1
     
     @torch.no_grad()
     def trajectory_term(self, parallel_model: ParallelModel, *args, **kwargs):
-        return self.gradient_dispersion
+        return float(self.gradient_dispersion)
     
 
 
 class TerminalDispersionBound(Bound):
     def __init__(self, clip=None, flatness=True, cross_dispersion=False, full_utilization=False) -> None:
         super().__init__()
-        self.n_iter = 0
+        self._n_iter = nn.Parameter(torch.zeros([1], dtype=torch.int), requires_grad=False)
         self.clip = clip
         self.flatness = flatness
         self.cross_dispersion = cross_dispersion
         self.full_utilization = full_utilization
 
     @property
+    def n_iter(self):
+        return self._n_iter.data
+
+    @property
     def name(self):
-        res = "terminal_dispersion" if not self.flatness else "termnial_dispersion+flatness"
-        # if self.unbiased:
-            # res = res + "+unbiased"
-        if self.cross_dispersion:
-            res = res + "+cross_dispersion"
-            if self.full_utilization:
-                res = res + "_full_utilization"
-        else:
-            res = res + "_possibly_biased"
+        res = "terminal_dispersion" 
+        if self.flatness:
+            res = res + "+flatness"
+            if self.cross_dispersion:
+                res = res + "+cross_dispersion"
+                if self.full_utilization:
+                    res = res + "_full_utilization"
+            else:
+                res = res + "_possibly_biased"
         return res
 
     @torch.no_grad()
     def update(self, parallel_model: ParallelModel, lr: float, *args, **kwargs):
-        self.n_iter += 1
+        self._n_iter.data += 1
     @torch.no_grad()
     def trajectory_term(self, parallel_model: ParallelModel, delta=None, *args, **kwargs):
         term_disp = parallel_model.terminal_dispersion(delta, self.cross_dispersion, self.full_utilization)
@@ -77,7 +89,7 @@ class TerminalDispersionBound(Bound):
                 return 0
             else:
                 return float('inf')
-        return term_disp / self.n_iter
+        return float(term_disp / self.n_iter)
     
     def gradients(self, parallel_model: ParallelModel, data_loader: ParallelDataloader):
         parallel_loss = ParallelLoss(loss_fn=ClippedCrossEntropyLoss(clip=self.clip)) 
@@ -112,9 +124,9 @@ class TerminalDispersionBound(Bound):
         grad_empirical = self.gradients(parallel_model, parallel_training_data_loader)
         grad_population = self.gradients(parallel_model, test_dataloader) 
         diff_grad = [[
-            # grad_population[index_model][index_param] 
-                # - grad_empirical[index_model][index_param] 
-            torch.zeros_like(grad_empirical[index_model][index_param])
+            grad_population[index_model][index_param] 
+                - grad_empirical[index_model][index_param] 
+            # torch.zeros_like(grad_empirical[index_model][index_param])
                     for index_param in range(len(grad_empirical[0]))] for index_model in range(len(grad_empirical))] 
         Delta = iHVP(
             parallel_model,
@@ -165,6 +177,7 @@ class TerminalDispersionBound(Bound):
         if trace:
             hessian_traces = hessian(model, criterion=ClippedCrossEntropyLoss(self.clip), dataloader=SelectedDataFieldDataLoader(loader, [0, 1]), cuda=True).trace()
             hessian_trace = torch.tensor(hessian_traces).mean().to(device=next(model.parameters()).device)
+            model.zero_grad()
         else:
             hessian_trace = None
         torch.cuda.synchronize()
@@ -234,7 +247,7 @@ class TerminalDispersionBound(Bound):
 
         with torch.no_grad():
             tensor_delta = torch.stack([torch.cat([p.flatten() for p in m]) for m in Delta], dim=0)
-        return self.trajectory_term(parallel_model, tensor_delta), *self.punishment(Delta, parallel_model, parallel_training_data_loader, test_data_loader), {
+        return float(self.trajectory_term(parallel_model, tensor_delta)), *self.punishment(Delta, parallel_model, parallel_training_data_loader, test_data_loader), {
             'delta_norm': tensor_delta.norm(dim=-1).mean().item()
         }
 
