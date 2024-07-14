@@ -2,6 +2,7 @@
     "files.watcherExclude": {
         "**/__pycache__/**": true,
         "**/data/**": true,
-        "**/runs/**": true
+        "**/runs/**": true,
+        "**/GMP/**": true
     }
 }

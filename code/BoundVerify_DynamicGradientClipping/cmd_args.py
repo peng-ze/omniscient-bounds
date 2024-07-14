@@ -49,11 +49,14 @@ parser.add_argument('--arch', default='fc1', choices=['fc1', 'lenet', 'alexnet',
 parser.add_argument("--print_freq", default=1, type=int)
 parser.add_argument("--valid_freq", default=1, type=int)
 parser.add_argument("--resume", type=str, default=None)
+parser.add_argument("--traj-reweight", type=float, default=1.0)
 
 parser.add_argument('--name', default='', help='Experiment name')
 
 parser.add_argument("--k", "-k", "--parapllel-models", type=int, default=5, help="The number of parallel models for variance estimation")
 parser.add_argument("--loss-upperbound", type=float, default=2.0, help="The scaling factor in the upperbound of Clipped Cross Entropy Loss. Setting this value to u will set the upperbound to u * log C, where C is the number of classes.")
+parser.add_argument("--estimate-bound-every-epochs", type=int, default=None, help="The frequency of bound estimation. Defaults to `None`, which means only estimate the bound at the end of the whole training.")
+parser.add_argument("--data-usage-for-bounds", type=float, default=1.0, help="The portion of data used when estimating the bounds. This can reduce the the time of bound estimation.")
 
 
 def format_experiment_name(args):
@@ -80,7 +83,7 @@ def format_experiment_name(args):
 def parse_args():
     import random
     args = parser.parse_args()
-    if args.seed is None:
-        args.seed  =random.randint(0, 100000)
+    if args.seed is None or args.seed < 0:
+        args.seed  = random.randint(0, 100000)
     args.exp_name = format_experiment_name(args)
     return args

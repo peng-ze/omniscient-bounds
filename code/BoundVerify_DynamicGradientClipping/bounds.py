@@ -7,6 +7,17 @@ from torch.utils.data import DataLoader
 from myhessian import iHVP, HVP, _inner_product
 from utils import ClippedCrossEntropyLoss
 from tqdm.auto import tqdm
+import numpy as np
+def average_hessian_trace(clip, model, dataloader: DataLoader):
+        trace_sum = 0
+        count = 0
+        for X, Y in dataloader:
+            model.zero_grad(True)
+            batch_mean_trace = np.mean(hessian(model, criterion=ClippedCrossEntropyLoss(clip), data=(X, Y), cuda=True).trace())
+            trace_sum = trace_sum + batch_mean_trace * len(Y)
+            count += len(Y)
+            model.zero_grad(True)
+        return trace_sum / count
 
 
 class Bound(nn.Module):
@@ -53,13 +64,14 @@ class GradientDispersionBound(Bound):
 
 
 class TerminalDispersionBound(Bound):
-    def __init__(self, clip=None, flatness=True, cross_dispersion=False, full_utilization=False) -> None:
+    def __init__(self, clip=None, flatness=True, cross_dispersion=False, full_utilization=False, traj_reweight=1.0) -> None:
         super().__init__()
         self._n_iter = nn.Parameter(torch.zeros([1], dtype=torch.int), requires_grad=False)
         self.clip = clip
         self.flatness = flatness
         self.cross_dispersion = cross_dispersion
         self.full_utilization = full_utilization
+        self.traj_reweight = traj_reweight
 
     @property
     def n_iter(self):
@@ -76,6 +88,8 @@ class TerminalDispersionBound(Bound):
                     res = res + "_full_utilization"
             else:
                 res = res + "_possibly_biased"
+            if self.traj_reweight != 1.0:
+                res = res + f"+reweight{self.traj_reweight:.3f}"
         return res
 
     @torch.no_grad()
@@ -124,32 +138,24 @@ class TerminalDispersionBound(Bound):
         grad_empirical = self.gradients(parallel_model, parallel_training_data_loader)
         grad_population = self.gradients(parallel_model, test_dataloader) 
         diff_grad = [[
-            grad_population[index_model][index_param] 
-                - grad_empirical[index_model][index_param] 
+            grad_empirical[index_model][index_param] 
+                - grad_population[index_model][index_param] 
             # torch.zeros_like(grad_empirical[index_model][index_param])
                     for index_param in range(len(grad_empirical[0]))] for index_model in range(len(grad_empirical))] 
         Delta = iHVP(
             parallel_model,
             [[
                 (SelectedDataFieldDataLoader(parallel_training_data_loader.loaders[i], data_field=[0, 1]), 1), 
-                # (selected_testing_loader, -1), 
-                2 * C[i]
+               # (selected_testing_loader, -1), 
+                2 * C[i] * self.traj_reweight 
             ] for i in range(len(parallel_model))],
             [[
-                2 * C[index_model] * nu[index_model][index_param] - diff_grad[index_model][index_param]  
+                - 2 * C[index_model] * self.traj_reweight * nu[index_model][index_param] - diff_grad[index_model][index_param]  
                 for index_param in range(len(nu[0]))] 
             for index_model in range(len(nu))],
-            1e-2,
+            4e-2,
             clip=self.clip
         )
-
-        # punishment1 = torch.stack([torch.stack([torch.inner(a.flatten(), b.flatten()) for a, b in zip(m_g, m_d)]).sum() for m_g, m_d in zip(diff_grad, Delta)]).mean() 
-        # punishment2 = torch.stack([
-                # _inner_product(delta, HVP([
-                    # (hessian(model, criterion=ClippedCrossEntropyLoss(clip=self.clip), dataloader=SelectedDataFieldDataLoader(emprical_loader, data_field=[0, 1]), cuda=True), 1),
-                    # # (hessian(model, criterion=ClippedCrossEntropyLoss(clip=self.clip), dataloader=selected_testing_loader, cuda=True), -1)
-                # ], delta))
-        # for emprical_loader, delta, model in  zip(parallel_training_data_loader.loaders, Delta, parallel_model.models)]).mean()/2
 
         return Delta
 
@@ -166,24 +172,26 @@ class TerminalDispersionBound(Bound):
 
         return torch.stack(losses).mean()
 
+
+
     def gamma(self, delta: 'list[Tensor]', model: nn.Module, loader: DataLoader, trace=True):
         loss0 = self.loss(model, loader)
         torch.cuda.synchronize()
         with torch.no_grad():
             for (d, p) in zip(delta, model.parameters()):
-                p.data -= d
+                p.data += d
         torch.cuda.synchronize()
         loss_delta = self.loss(model, loader)
         if trace:
-            hessian_traces = hessian(model, criterion=ClippedCrossEntropyLoss(self.clip), dataloader=SelectedDataFieldDataLoader(loader, [0, 1]), cuda=True).trace()
+            hessian_traces = average_hessian_trace(self.clip, model, SelectedDataFieldDataLoader(loader, [0, 1]))
             hessian_trace = torch.tensor(hessian_traces).mean().to(device=next(model.parameters()).device)
-            model.zero_grad()
+            model.zero_grad(True)
         else:
             hessian_trace = None
         torch.cuda.synchronize()
         with torch.no_grad():
             for (d, p) in zip(delta, model.parameters()):
-                p.data += d
+                p.data -= d
         torch.cuda.synchronize()
         return loss_delta - loss0, hessian_trace
 
@@ -195,8 +203,9 @@ class TerminalDispersionBound(Bound):
         delta_losses = []
         for delta, model, empirical_loader in zip(tqdm(Delta, "punishing"), parallel_model.models, parallel_training_data_loader.loaders):
             empirical_delta_loss, hessian_trace = self.gamma(delta, model, empirical_loader)
-            population_delta_loss, _ = self.gamma(delta, model, test_data_loader, False)
-            hessian_traces.append(hessian_trace)
+            population_delta_loss,  population_hessian_trace = self.gamma(delta, model, test_data_loader, True)
+            # population_hessian_trace = 0
+            hessian_traces.append((hessian_trace - population_hessian_trace).abs())
             delta_losses.append(empirical_delta_loss - population_delta_loss)
         return torch.stack(delta_losses).mean(),  torch.stack(hessian_traces).mean()
 
@@ -244,6 +253,7 @@ class TerminalDispersionBound(Bound):
             return self.trajectory_term(parallel_model), 0, None, {}
         nu = self.get_nu(parallel_model)
         Delta = self.surrogate_forget(C, nu, parallel_model, parallel_training_data_loader, test_data_loader)
+        # Delta = nu
 
         with torch.no_grad():
             tensor_delta = torch.stack([torch.cat([p.flatten() for p in m]) for m in Delta], dim=0)

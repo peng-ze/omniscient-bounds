@@ -28,7 +28,7 @@ def _inner_product(a: 'list[Tensor]', b: 'list[Tensor]'):
         res = res + torch.inner(aa.flatten(), bb.flatten())
     return res
 
-def iHVP(parallel_model: ParallelModel, hessians:'list[list[Union[Tuple[DataLoader, float], float]]]', b: 'list[list[Tensor]]', epsilon: float, max_iteration=-1, clip=None):
+def iHVP(parallel_model: ParallelModel, hessians:'list[list[Union[Tuple[DataLoader, float], float]]]', b: 'list[list[Tensor]]', epsilon: float, max_iteration=100, clip=None):
     with torch.no_grad():
         vs = [[torch.zeros_like(p) for p in m] for m in b]
         rs = [[p + 0 for p in m] for m in b]

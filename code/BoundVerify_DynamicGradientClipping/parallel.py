@@ -65,7 +65,7 @@ class ParallelModel(nn.Module):
                 mean = p.mean(dim=1, keepdim=True)
 
             delta = delta.reshape(p.shape)
-            res = (p - mean - delta).square().flatten(0, 1).mean(dim=0).sum()
+            res = (p - mean + delta).square().flatten(0, 1).mean(dim=0).sum()
         return res
 
     @torch.no_grad()

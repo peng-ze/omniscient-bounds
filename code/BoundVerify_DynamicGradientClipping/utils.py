@@ -15,7 +15,7 @@ class MyDataset(Dataset):
         if self.ds == "mnist":
             transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
             if args.label_corrupt_prob == 0:
-                self.mnist = datasets.MNIST(root=args.data_path, train=_train, download=False, transform=transform)
+                self.mnist = datasets.MNIST(root=args.data_path, train=_train, download=True, transform=transform)
             else:
                 self.mnist = MNISTRandomLabels(root=args.data_path, train=_train, download=True,
                                                transform=transform, corrupt_prob=args.label_corrupt_prob)

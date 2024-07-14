@@ -5,10 +5,11 @@ import numpy as np
 import torch
 from torch import Tensor
 import torch.nn as nn
+import torch.utils
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 from torch.distributions import Normal
 from pyhessian import hessian  # Hessian computation
 from utils import *
@@ -18,8 +19,8 @@ import time
 import random
 from tqdm.auto import tqdm
 from collections import OrderedDict
-from parallel import ParallelModel, ParallelLoss, make_parallel_datasets, ParallelDataloader
-from bounds import GradientDispersionBound, TerminalDispersionBound, Bound
+from parallel import ParallelModel, ParallelLoss, make_parallel_datasets, ParallelDataloader, SelectedDataFieldDataLoader
+from bounds import GradientDispersionBound, TerminalDispersionBound, Bound, average_hessian_trace
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -29,7 +30,12 @@ torch.autograd.set_detect_anomaly(True)
 def accuracy(output: Tensor, targets: Tensor):
     return (output.argmax(dim=-1) == targets).float().mean()
 
-    
+def subset(datasets, k):
+    if isinstance(datasets, list):
+        return [subset(d, k) for d in datasets]
+    indices = torch.randperm(len(datasets))[:int(len(datasets) * k)]
+    return Subset(datasets, indices) 
+
 
 class RunModel(nn.Module):
     def __init__(self, args):
@@ -58,8 +64,9 @@ class RunModel(nn.Module):
             GradientDispersionBound(), 
             TerminalDispersionBound(clip=self.clip, flatness=False), 
             # TerminalDispersionBound(clip=self.loss_clip),
-            # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
             TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True),
+            # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
+            TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, traj_reweight=args.traj_reweight),
             # TerminalDispersionBound(clip=self.loss_clip, unbiased=True, trajectories_for_opt=args.trajectories_for_optimization)
         ])
 
@@ -77,8 +84,8 @@ class RunModel(nn.Module):
         testdataset = InMemoryDataset(MyDataset(args, _train=False))
 
         train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=4, pin_memory=True, persistent_workers=True)
-        train_test_loader = ParallelDataloader(train_test_dataset, batch_size=512, num_workers=4, pin_memory=True, persistent_workers=True)
-        test_loader = DataLoader(testdataset, batch_size=512, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+        train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=256, num_workers=4, pin_memory=True, persistent_workers=True)
+        test_loader = DataLoader(subset(testdataset, args.data_usage_for_bounds), batch_size=256, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
         if args.dataset == "mnist":
             from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
         if args.dataset == "cifar10":
@@ -167,26 +174,16 @@ class RunModel(nn.Module):
         return tr_losses, tr_acces, ts_losses, ts_acces
 
     def train_epoch(self, args, train_loader):
-        # """Train for one epoch on the training set"""
-        # losses = AverageMeter()
-        # norm_mean = AverageMeter()
-        # variance_mean = AverageMeter()
-        # batch_mean = AverageMeter()
         self.model.train()
         for batch_idx, data in enumerate(tqdm(train_loader)):
             inputs, labels, idx = data
-            # loss, norm, variance, batch_norm = 
             self.train_batch(inputs, labels, idx, args)
-            # losses.update(loss.item(), inputs.size(0))
-            # norm_mean.update(norm, inputs.size(0))
-            # variance_mean.update(variance, inputs.size(0))
-            # batch_mean.update(batch_norm)
-        # return losses.avg, norm_mean.avg, variance_mean.avg, batch_mean.avg
 
     def train_batch(self, imgs, targets, idx, args):
+        self.model.train()
 
-        self.model.zero_grad()
-        self.optimizer.zero_grad()
+        self.model.zero_grad(True)
+        self.optimizer.zero_grad(True)
 
         if not isinstance(imgs, Tensor):
             imgs = [d.to(device) for d in imgs]
@@ -228,8 +225,8 @@ class RunModel(nn.Module):
         # self.gradient_norm.append(max_grad_norm.item())
         # self.gradient_variance.append(var.item())
         # return train_loss, sample_grad_norm.sqrt().mean().item(),  var.item(), max_grad_norm.item()
-        self.model.zero_grad()
-        self.optimizer.zero_grad()
+        self.model.zero_grad(True)
+        self.optimizer.zero_grad(True)
 
     def validate_test(self, val_loader, model, args):
         model.eval()
@@ -252,20 +249,32 @@ class RunModel(nn.Module):
 
     def compute_hessian(self, args):
         train_loader = ParallelDataloader(self.plain_train_dataset, batch_size=self.n_sample//10, shuffle=True)
-        # self.model.eval()
+        self.model.eval()
 
         hessian_traces: list[float] = []
         for (model, loader) in zip(self.model.models, train_loader.loaders): 
-            inputs, targets, _ = next(iter(loader))
-            inputs, targets = inputs.to(device), targets.to(device)
-            hessian_comp = hessian(model, ClippedCrossEntropyLoss(clip=self.loss_clip), data=(inputs, targets), cuda=True)
-            trace = hessian_comp.trace()
-            model.zero_grad()
-            hessian_traces.append(float(np.mean(trace)))
+            empirical_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
+            # inputs, targets, _ = next(iter(loader))
+            # inputs, targets = inputs.to(device), targets.to(device)
+            # hessian_comp_empirical = hessian(model, ClippedCrossEntropyLoss(clip=self.loss_clip), data=(inputs, targets), cuda=True)
+            # empirical_trace = np.mean(hessian_comp_empirical.trace())
+            # hessian_comp_empirical = None; model.zero_grad(True)
+            
+            population_trace = 0
+            # population_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(self.test_loader, [0,1]))
+
+           #  test_inputs, test_targets, _ = next(iter(self.test_loader))
+            # test_inputs, test_targets = test_inputs.to(device), test_targets.to(device)
+            # hessian_comp_population = hessian(model, ClippedCrossEntropyLoss(clip=self.loss_clip), data=(test_inputs, test_targets), cuda=True)
+            # population_trace = np.mean(hessian_comp_population.trace())
+            # hessian_comp_population = None; model.zero_grad(True)
+
+            trace =  empirical_trace - population_trace
+            hessian_traces.append(float(trace))
         return hessian_traces 
 
     def compute_bound(self, args):
-        self.model.train()
+        self.model.eval()
         if args.proxy:
             std_fit = self.fit_subGaussian()
             std_proxy = std_fit
@@ -273,24 +282,30 @@ class RunModel(nn.Module):
             device = next(self.model.parameters()).device
             std_proxy = torch.tensor([self.loss_clip / 2], device=device) 
         hessian_traces = self.compute_hessian(args)
-        hessian_term = 1 / 2 * sum(hessian_traces) / len(hessian_traces)
         results = []
         for bound in self.bounds:
-            C = [3/2 * (std_proxy**2 / self.n_sample * h)**(1/3) for h in hessian_traces]
+            hessian_term = 1 / 2 * sum(hessian_traces) / len(hessian_traces)
+            res = OrderedDict()
+            res['name'] = bound.name
+            res['hessian_term_prior'] = float(self.n_iter * hessian_term)
+            print(res['hessian_term_prior'])
+            C = [3/2 * (std_proxy**2 / self.n_sample * h).abs()**(1/3) for h in hessian_traces]
             trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_test_loader, self.test_loader)
             if new_hessian_trace is not None:
                 hessian_term = new_hessian_trace / 2
             A = (std_proxy**2 / self.n_sample * trajectory_term).sqrt()
-            B = self.n_iter * hessian_term
+            B = self.n_iter * abs(hessian_term)
             best_sigma = (A / (2 * B))**(1/3)
             bound_value = 3 * ((A/2)**(2/3)) * (B ** (1/3)) + punishment 
             bound.computed_value = bound_value
 
-            res = OrderedDict()
-            res['name'] = bound.name
+            res['C'] = float(torch.tensor(C, device=A.device).mean())
+            res['trajectory_term_vanilla'] = float(A)
+            res['flatness_term_vanilla'] = float(B)
             res['best_sigma'] = float(best_sigma)
             res['trajectory_term'] = float(A / best_sigma)
             res['flatness_term'] = float(best_sigma ** 2 * B)
+
             res['punishment'] = float(punishment)
             for k, v in extra_info.items():
                 res[k] = v
@@ -310,7 +325,7 @@ class RunModel(nn.Module):
             dist, _, _ = model_.forward(torch.ones(1, 1).to(device) * train_x)
             likelihood = dist.log_prob(losses_all)
             loss = (-likelihood).sum()
-            optimizer_.zero_grad()
+            optimizer_.zero_grad(True)
             loss.backward()
             optimizer_.step()
         _, mean_proxy, std_proxy = model_.forward(torch.ones(1, 1).to(device) * train_x)
@@ -340,6 +355,8 @@ def main():
     exp_dir, id = setup_logging(args)
     seed = args.seed
     torch.manual_seed(seed)  # cpu
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     torch.cuda.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -352,12 +369,15 @@ def main():
 
     if args.resume is None:
         tr_losses, tr_acces, ts_losses, ts_acces = runmodel.train_model(args)
-        torch.save(runmodel.state_dict(), os.path.join(exp_dir, id + '.pth'))
+        state_dict = runmodel.state_dict()
+        torch.save(state_dict, os.path.join(exp_dir, id + '.pth'))
     else:
         logging.info(f"Loading from {exp_dir}/{id}.pth")
         state_dict = torch.load(os.path.join(exp_dir, id + '.pth'))
         runmodel.load_state_dict(state_dict, strict=True)
         state_dict = None
+        ts_loss, test_acc = runmodel.validate_test(runmodel.test_loader, runmodel.model, args)
+        print(ts_loss, test_acc)
 
     results = runmodel.compute_bound(args)
     for res in results:
