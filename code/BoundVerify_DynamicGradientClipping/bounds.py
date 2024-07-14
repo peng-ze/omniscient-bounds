@@ -64,7 +64,7 @@ class GradientDispersionBound(Bound):
 
 
 class TerminalDispersionBound(Bound):
-    def __init__(self, clip=None, flatness=True, cross_dispersion=False, full_utilization=False, traj_reweight=1.0) -> None:
+    def __init__(self, clip=None, flatness=True, cross_dispersion=False, full_utilization=False, traj_reweight=1.0, tolerance=1e-2) -> None:
         super().__init__()
         self._n_iter = nn.Parameter(torch.zeros([1], dtype=torch.int), requires_grad=False)
         self.clip = clip
@@ -72,6 +72,7 @@ class TerminalDispersionBound(Bound):
         self.cross_dispersion = cross_dispersion
         self.full_utilization = full_utilization
         self.traj_reweight = traj_reweight
+        self.tolerance = tolerance
 
     @property
     def n_iter(self):
@@ -153,7 +154,7 @@ class TerminalDispersionBound(Bound):
                 - 2 * C[index_model] * self.traj_reweight * nu[index_model][index_param] - diff_grad[index_model][index_param]  
                 for index_param in range(len(nu[0]))] 
             for index_model in range(len(nu))],
-            4e-2,
+            self.tolerance,
             clip=self.clip
         )
 
@@ -201,7 +202,7 @@ class TerminalDispersionBound(Bound):
         torch.cuda.synchronize()
         hessian_traces = []
         delta_losses = []
-        for delta, model, empirical_loader in zip(tqdm(Delta, "punishing"), parallel_model.models, parallel_training_data_loader.loaders):
+        for delta, model, empirical_loader in zip(tqdm(Delta, f"punishing ({self.traj_reweight})"), parallel_model.models, parallel_training_data_loader.loaders):
             empirical_delta_loss, hessian_trace = self.gamma(delta, model, empirical_loader)
             population_delta_loss,  population_hessian_trace = self.gamma(delta, model, test_data_loader, True)
             # population_hessian_trace = 0

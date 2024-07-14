@@ -38,7 +38,7 @@ parser.add_argument('--bound', type=str2bool, nargs='?',
                         const=True, default=True, help='Whether to use perturbed training')
 parser.add_argument('--fixinit', type=str2bool, nargs='?',
                         const=False, default=False, help='Whether to use perturbed training')
-parser.add_argument('--early_stop', type=str2bool, nargs='?',
+parser.add_argument('--early-stop', type=str2bool, nargs='?',
                         const=False, default=False, help='Whether to use perturbed training') 
 parser.add_argument('--proxy', type=str2bool, nargs='?',
                         const=False, default=False, help='Whether to use perturbed training')                         
@@ -46,8 +46,8 @@ parser.add_argument('--proxy', type=str2bool, nargs='?',
 
 parser.add_argument('--arch', default='fc1', choices=['fc1', 'lenet', 'alexnet', 'resnet','vgg'])
 
-parser.add_argument("--print_freq", default=1, type=int)
-parser.add_argument("--valid_freq", default=1, type=int)
+parser.add_argument("--print-freq", default=1, type=int)
+parser.add_argument("--valid-freq", default=1, type=int)
 parser.add_argument("--resume", type=str, default=None)
 parser.add_argument("--traj-reweight", type=float, nargs='+', default=[])
 
@@ -55,8 +55,9 @@ parser.add_argument('--name', default='', help='Experiment name')
 
 parser.add_argument("--k", "-k", "--parapllel-models", type=int, default=5, help="The number of parallel models for variance estimation")
 parser.add_argument("--loss-upperbound", type=float, default=2.0, help="The scaling factor in the upperbound of Clipped Cross Entropy Loss. Setting this value to u will set the upperbound to u * log C, where C is the number of classes.")
-parser.add_argument("--estimate-bound-every-epochs", type=int, default=None, help="The frequency of bound estimation. Defaults to `None`, which means only estimate the bound at the end of the whole training.")
+parser.add_argument("--bound-freq", type=int, default=None, help="The frequency of bound estimation. Defaults to `None`, which means only estimate the bound at the end of the whole training.")
 parser.add_argument("--data-usage-for-bounds", type=float, default=1.0, help="The portion of data used when estimating the bounds. This can reduce the the time of bound estimation.")
+parser.add_argument("--tolerance", type=float, default=1e-2)
 
 
 def format_experiment_name(args):
@@ -75,7 +76,7 @@ def format_experiment_name(args):
     else:
         name += '_NoWd'
 
-    name += f'_seed{args.seed}'
+    # name += f'_seed{args.seed}'
 
     return name
 

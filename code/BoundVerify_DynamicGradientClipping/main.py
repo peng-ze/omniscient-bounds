@@ -40,6 +40,7 @@ def subset(datasets, k):
 class RunModel(nn.Module):
     def __init__(self, args):
         super().__init__()
+        self.args = args
         import math
         self.traindataset = None
         self.train_loader, self.train_test_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
@@ -64,11 +65,11 @@ class RunModel(nn.Module):
             GradientDispersionBound(), 
             TerminalDispersionBound(clip=self.clip, flatness=False), 
             # TerminalDispersionBound(clip=self.loss_clip),
-            TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True),
+            TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, tolerance=self.args.tolerance),
             # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
             # TerminalDispersionBound(clip=self.loss_clip, unbiased=True, trajectories_for_opt=args.trajectories_for_optimization)
         ] + [
-                TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, traj_reweight=w) for w in args.traj_reweight
+                TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, traj_reweight=w, tolerance=self.args.tolerance) for w in args.traj_reweight
         ]
         )
 
@@ -134,11 +135,16 @@ class RunModel(nn.Module):
         self.n_sample = len(self.plain_train_dataset[0])
 
         return train_loader, train_test_loader, test_loader, model
+    
+    def should_compute_bound(self, epoch):
+
+        return (self.args.bound_freq is not None and (epoch + 1) % self.args.bound_freq == 0) or epoch + 1 == self.epochs
 
     def train_model(self, args, start_epoch=None, epochs=None):
         torch.backends.cudnn.benchmark = True
         start_epoch = start_epoch or 0
         epochs = epochs or args.epochs
+        self.epochs = epochs
         tr_losses = []
         tr_acces = []
         ts_losses = []
@@ -152,7 +158,7 @@ class RunModel(nn.Module):
             # train for one epoch
             self.train_epoch(args, self.train_loader)
 
-            if (self.epoch + 1) % args.test_freq == 0 or self.epoch == epochs - 1:
+            if (self.epoch + 1) % args.test_freq == 0 or self.epoch == epochs - 1 or self.should_compute_bound(self.epoch):
                 tr_loss, train_acc = self.validate_test(self.train_test_loader, self.model, args)
                 # evaluate on validation set
                 ts_loss, test_acc = self.validate_test(self.test_loader, self.model, args)
@@ -166,6 +172,8 @@ class RunModel(nn.Module):
                             '| ' + '  '.join([f'{bound.name}.traj: {bound.trajectory_term(self.model):.3e}' for bound in self.bounds]) + ' | Time: %2.1f s ',
                             self.epoch, tr_loss, ts_loss, ts_loss - tr_loss, train_acc, test_acc, 100-test_acc,
                             (time.time() - t))
+            if self.should_compute_bound(self.epoch):
+                self.log_bound(self.epoch)
 
             if args.early_stop and self.epoch > 0:
                 if tr_loss <= 0.0005:
@@ -173,6 +181,7 @@ class RunModel(nn.Module):
                 if args.label_corrupt_prob > 0:
                     if train_acc >= 99.995:
                         break
+        
         return tr_losses, tr_acces, ts_losses, ts_acces
 
     def train_epoch(self, args, train_loader):
@@ -334,13 +343,37 @@ class RunModel(nn.Module):
         print("Variance proxy: %.4f" % std_proxy.square().item(), "Mean proxy: %.4f" % mean_proxy.item())
         return std_proxy.item()
 
+    def log_bound(self, epoch):
+        assert self.args.resume is None
+        # tr_losses, tr_acces, ts_losses, ts_acces = self.train_model(self.args)
+        # state_dict = self.state_dict()
+        # state_dict['epoch'] = epoch
+        # torch.save(state_dict, os.path.join(self.args.exp_dir, self.args.id + '.pth'))
+        # else:
+            # logging.info(f"Loading from {self.args.exp_dir}/{self.args.id}.pth")
+            # state_dict = torch.load(os.path.join(self.args.exp_dir, self.args.id + '.pth'))
+            # state_dict: dict
+            # state_dict.pop('epoch')
+            # self.load_state_dict(state_dict, strict=True)
+            # state_dict = None
+            # ts_loss, test_acc = self.validate_test(self.test_loader, self.model, args)
+            # print(ts_loss, test_acc)
+
+        results = self.compute_bound(self.args)
+        self.model.zero_grad(True)
+        for res in results:
+            logging.info( f'Bound at Epoch {epoch} ' + 
+                '  '.join([f'{k}: {v}' for k, v in res.items()])
+            )
+
+
 
 
 def setup_logging(args):
     exp_dir = os.path.join('runs', args.exp_name)
     if not os.path.isdir(exp_dir):
         os.makedirs(exp_dir)
-    id = args.resume if args.resume is not None else datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    id = args.resume if args.resume is not None else datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + f'-seed{args.seed}'
     log_fn = os.path.join(exp_dir, "LOG.{0}.txt".format(id))
     logging.basicConfig(filename=log_fn, filemode='a', level=logging.DEBUG)
     # also log into console
@@ -355,6 +388,8 @@ def setup_logging(args):
 def main():
     args = cmd_args.parse_args()
     exp_dir, id = setup_logging(args)
+    args.exp_dir = exp_dir
+    args.id = id
     seed = args.seed
     torch.manual_seed(seed)  # cpu
     torch.backends.cudnn.deterministic = True
@@ -369,23 +404,7 @@ def main():
                 f' Trajectory samples: {args.k}  Seed: {seed} Traectory Term Reweight: {args.traj_reweight}')
     logging.info('Number of parameters: %d', sum([p.data.nelement() for p in runmodel.model.parameters()]) // args.k)
 
-    if args.resume is None:
-        tr_losses, tr_acces, ts_losses, ts_acces = runmodel.train_model(args)
-        state_dict = runmodel.state_dict()
-        torch.save(state_dict, os.path.join(exp_dir, id + '.pth'))
-    else:
-        logging.info(f"Loading from {exp_dir}/{id}.pth")
-        state_dict = torch.load(os.path.join(exp_dir, id + '.pth'))
-        runmodel.load_state_dict(state_dict, strict=True)
-        state_dict = None
-        ts_loss, test_acc = runmodel.validate_test(runmodel.test_loader, runmodel.model, args)
-        print(ts_loss, test_acc)
-
-    results = runmodel.compute_bound(args)
-    for res in results:
-        logging.info(
-            '  '.join([f'{k}: {v}' for k, v in res.items()])
-        )
+    tr_losses, tr_acces, ts_losses, ts_acces = runmodel.train_model(args)
 
     # plt.title('Loss')
     # plt.plot(np.arange(len(tr_losses)), tr_losses, color='green', linewidth=2.0, linestyle='-', label='Train')

@@ -1,1 +1,1 @@
-python main.py --arch fc1 --epochs 500 --batch-size 60 --learning-rate 0.01  --dataset mnist --data-path data --width 512 --label-corrupt-prob 0 --early_stop False --fixinit False --seed 1  --k 6 --test-freq 20 "$@"
+python main.py --arch fc1 --epochs 500 --batch-size 60 --learning-rate 0.01  --dataset mnist --width 512 --label-corrupt-prob 0 --early-stop False --fixinit False --seed 1  --k 6 --loss-upperbound 12 --test-freq 20 --data-usage-for-bounds 1.0 --traj-reweight 1e1 1e3 1e5 --bound-freq 50 "$@"
