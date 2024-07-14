@@ -66,9 +66,11 @@ class RunModel(nn.Module):
             # TerminalDispersionBound(clip=self.loss_clip),
             TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True),
             # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
-            TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, traj_reweight=args.traj_reweight),
             # TerminalDispersionBound(clip=self.loss_clip, unbiased=True, trajectories_for_opt=args.trajectories_for_optimization)
-        ])
+        ] + [
+                TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, traj_reweight=w) for w in args.traj_reweight
+        ]
+        )
 
 
     def get_data_model(self, args, shuffle_train=True):
@@ -363,8 +365,8 @@ def main():
 
     runmodel = RunModel(args).to(device)
     logging.info(f'Model: {args.arch}   Dataset: {args.dataset}  lr: {args.learning_rate}   batch size: {args.batch_size} '
-                 f' Corrupt level: {args.label_corrupt_prob}  width: {args.width} Clip factor: {args.clip_factor} Clip start: {args.clip_start} Clip stratagy: {args.stra} ' 
-                 f' Trajectory samples: {args.k}  Seed: {seed}')
+                f' Corrupt level: {args.label_corrupt_prob}  width: {args.width} Clip factor: {args.clip_factor} Clip start: {args.clip_start} Clip stratagy: {args.stra} ' 
+                f' Trajectory samples: {args.k}  Seed: {seed} Traectory Term Reweight: {args.traj_reweight}')
     logging.info('Number of parameters: %d', sum([p.data.nelement() for p in runmodel.model.parameters()]) // args.k)
 
     if args.resume is None:
