@@ -164,14 +164,17 @@ class TerminalDispersionBound(Bound):
     def loss(self, model: nn.Module, loader: DataLoader):
         criterion = ClippedCrossEntropyLoss(self.clip)
         device = next(model.parameters()).device
-        losses = []
+        loss_sum = 0
+        count = 0
         for data in loader:
             data = list(data)
             X, Y = data[0].to(device), data[1].to(device)
             output = model(X) 
-            losses.append(criterion(output, Y))
+            loss = criterion(output, Y)
+            loss_sum = loss_sum + loss * len(Y)
+            count += len(Y)
 
-        return torch.stack(losses).mean()
+        return loss_sum / count #! DO NOT average over batchwise losses, since the last batch can be smaller. Averaging over batchwise losses thus twists the empirical and the population distribution. Since the bound is tight, such error will make the estimated bound smaller than the generalization gap 
 
 
 
@@ -207,7 +210,7 @@ class TerminalDispersionBound(Bound):
             population_delta_loss,  population_hessian_trace = self.gamma(delta, model, test_data_loader, True)
             # population_hessian_trace = 0
             hessian_traces.append((hessian_trace - population_hessian_trace).abs())
-            delta_losses.append(empirical_delta_loss - population_delta_loss)
+            delta_losses.append((empirical_delta_loss - population_delta_loss).abs())
         return torch.stack(delta_losses).mean(),  torch.stack(hessian_traces).mean()
 
     @torch.no_grad()

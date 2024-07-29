@@ -86,5 +86,7 @@ def parse_args():
     args = parser.parse_args()
     if args.seed is None or args.seed < 0:
         args.seed  = random.randint(0, 100000)
+    if args.bound_freq <= 0:
+        args.bound_freq = None
     args.exp_name = format_experiment_name(args)
     return args

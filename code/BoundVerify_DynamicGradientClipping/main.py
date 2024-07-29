@@ -168,7 +168,7 @@ class RunModel(nn.Module):
                 ts_losses.append(ts_loss)
                 ts_acces.append(test_acc)
 
-                logging.info('%03d: L-tr: %.3f  L-ts: %.3f  gap: %.3f | Acc-train: %.2f Acc-test: %.2f Error-test: %.2f '
+                logging.info('%03d: L-tr: %.4f  L-ts: %.4f  gap: %.4f | Acc-train: %.2f Acc-test: %.2f Error-test: %.2f '
                             '| ' + '  '.join([f'{bound.name}.traj: {bound.trajectory_term(self.model):.3e}' for bound in self.bounds]) + ' | Time: %2.1f s ',
                             self.epoch, tr_loss, ts_loss, ts_loss - tr_loss, train_acc, test_acc, 100-test_acc,
                             (time.time() - t))
