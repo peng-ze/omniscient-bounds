@@ -46,7 +46,7 @@ class RunModel(nn.Module):
         self.train_loader, self.train_test_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
         self.loss_clip = math.log(args.num_classes) * args.loss_upperbound
 
-        self.criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.loss_clip))
+        self.criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.args.train_loss_upperbound))
         self.accuracy = ParallelLoss(accuracy, reduction='mean')
         self.val_criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.loss_clip), reduction='mean')
         self.optimizer = torch.optim.SGD(self.model.parameters(), args.learning_rate,
@@ -401,7 +401,9 @@ def main():
     runmodel = RunModel(args).to(device)
     logging.info(f'Model: {args.arch}   Dataset: {args.dataset}  lr: {args.learning_rate}   batch size: {args.batch_size} '
                 f' Corrupt level: {args.label_corrupt_prob}  width: {args.width} Clip factor: {args.clip_factor} Clip start: {args.clip_start} Clip stratagy: {args.stra} ' 
-                f' Trajectory samples: {args.k}  Seed: {seed} Traectory Term Reweight: {args.traj_reweight}')
+                f' Trajectory samples: {args.k}  Seed: {seed} Traectory Term Reweight: {args.traj_reweight} '
+                f' Loss Bound (training): {args.train_loss_upperbound}  Loss Bound (evaluation): {args.loss_upperbound} '
+                )
     logging.info('Number of parameters: %d', sum([p.data.nelement() for p in runmodel.model.parameters()]) // args.k)
 
     tr_losses, tr_acces, ts_losses, ts_acces = runmodel.train_model(args)
