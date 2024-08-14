@@ -35,7 +35,7 @@ class Bound(nn.Module):
     def compute(self, parallel_model: ParallelModel, *args, **kwargs):
         pass
     
-    def forget(self, C: float, parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, test_data_loader: DataLoader):
+    def forget(self, C: float, parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val_data_loader: DataLoader, test_data_loader: DataLoader):
         return float(self.trajectory_term(parallel_model)), 0, None, {}
 
 class GradientDispersionBound(Bound):
@@ -131,13 +131,13 @@ class TerminalDispersionBound(Bound):
         return res
 
 
-    def surrogate_forget(self, C: Tensor, nu: 'list[list[Tensor]]', parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, test_dataloader: DataLoader):
+    def surrogate_forget(self, C: Tensor, nu: 'list[list[Tensor]]', parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val_dataloader: DataLoader):
 
 
-        selected_testing_loader = SelectedDataFieldDataLoader(test_dataloader, [0, 1])
+        selected_validation_loader = SelectedDataFieldDataLoader(val_dataloader, [0, 1])
 
         grad_empirical = self.gradients(parallel_model, parallel_training_data_loader)
-        grad_population = self.gradients(parallel_model, test_dataloader) 
+        grad_population = self.gradients(parallel_model, val_dataloader) 
         diff_grad = [[
             grad_empirical[index_model][index_param] 
                 - grad_population[index_model][index_param] 
@@ -252,11 +252,11 @@ class TerminalDispersionBound(Bound):
 
 
 
-    def forget(self, C: float, parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, test_data_loader: DataLoader):
+    def forget(self, C: float, parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val_data_loader: DataLoader, test_data_loader: DataLoader):
         if not self.flatness:
             return self.trajectory_term(parallel_model), 0, None, {}
         nu = self.get_nu(parallel_model)
-        Delta = self.surrogate_forget(C, nu, parallel_model, parallel_training_data_loader, test_data_loader)
+        Delta = self.surrogate_forget(C, nu, parallel_model, parallel_training_data_loader, val_data_loader)
         # Delta = nu
 
         with torch.no_grad():

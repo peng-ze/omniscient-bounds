@@ -59,6 +59,7 @@ parser.add_argument("--train-loss-upperbound", type=float, default=None, help="T
 parser.add_argument("--bound-freq", type=int, default=None, help="The frequency of bound estimation. Defaults to `None`, which means only estimate the bound at the end of the whole training.")
 parser.add_argument("--data-usage-for-bounds", type=float, default=1.0, help="The portion of data used when estimating the bounds. This can reduce the the time of bound estimation.")
 parser.add_argument("--tolerance", type=float, default=1e-2)
+parser.add_argument("--validation-usage", type=float, default=0.33, help="The portion of validation data, split from the testing set, that is used for optimizing the bound.")
 
 
 def format_experiment_name(args):

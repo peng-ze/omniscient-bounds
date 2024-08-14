@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 import torch.utils
+import torch.utils
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torch.nn.functional as F
@@ -43,7 +44,7 @@ class RunModel(nn.Module):
         self.args = args
         import math
         self.traindataset = None
-        self.train_loader, self.train_test_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
+        self.train_loader, self.train_test_loader, self.val_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
         self.loss_clip = math.log(args.num_classes) * args.loss_upperbound
         self.train_loss_clip = (math.log(args.num_classes) * args.train_loss_upperbound) if args.train_loss_upperbound is not None else None
 
@@ -85,11 +86,12 @@ class RunModel(nn.Module):
 
         train_test_dataset = training_data 
 
-        testdataset = InMemoryDataset(MyDataset(args, _train=False))
+        valdataset, testdataset = torch.utils.data.random_split(InMemoryDataset(MyDataset(args, _train=False)), [args.validation_usage, 1-args.validation_usage])
 
         train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=4, pin_memory=True, persistent_workers=True)
         train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=256, num_workers=4, pin_memory=True, persistent_workers=True)
         test_loader = DataLoader(subset(testdataset, args.data_usage_for_bounds), batch_size=256, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(subset(valdataset, args.data_usage_for_bounds), batch_size=256, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
         if args.dataset == "mnist":
             from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
         if args.dataset == "cifar10":
@@ -135,7 +137,7 @@ class RunModel(nn.Module):
         model = ParallelModel(make_model, k=args.k).to(device)
         self.n_sample = len(self.plain_train_dataset[0])
 
-        return train_loader, train_test_loader, test_loader, model
+        return train_loader, train_test_loader, val_loader, test_loader, model
     
     def should_compute_bound(self, epoch):
 
@@ -302,7 +304,7 @@ class RunModel(nn.Module):
             res['hessian_term_prior'] = float(self.n_iter * hessian_term)
             print(res['hessian_term_prior'])
             C = [3/2 * (std_proxy**2 / self.n_sample * h).abs()**(1/3) for h in hessian_traces]
-            trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_test_loader, self.test_loader)
+            trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_test_loader, self.val_loader, self.test_loader)
             if new_hessian_trace is not None:
                 hessian_term = new_hessian_trace / 2
             A = (std_proxy**2 / self.n_sample * trajectory_term).sqrt()
