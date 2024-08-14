@@ -45,8 +45,9 @@ class RunModel(nn.Module):
         self.traindataset = None
         self.train_loader, self.train_test_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
         self.loss_clip = math.log(args.num_classes) * args.loss_upperbound
+        self.train_loss_clip = (math.log(args.num_classes) * args.train_loss_upperbound) if args.train_loss_upperbound is not None else None
 
-        self.criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.args.train_loss_upperbound))
+        self.criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.train_loss_clip))
         self.accuracy = ParallelLoss(accuracy, reduction='mean')
         self.val_criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.loss_clip), reduction='mean')
         self.optimizer = torch.optim.SGD(self.model.parameters(), args.learning_rate,
@@ -63,7 +64,7 @@ class RunModel(nn.Module):
 
         self.bounds: 'list[Bound]' = nn.ModuleList([
             GradientDispersionBound(), 
-            TerminalDispersionBound(clip=self.clip, flatness=False), 
+            TerminalDispersionBound(clip=self.loss_clip, flatness=False), 
             # TerminalDispersionBound(clip=self.loss_clip),
             TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, tolerance=self.args.tolerance),
             # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
