@@ -89,9 +89,9 @@ class RunModel(nn.Module):
         valdataset, testdataset = torch.utils.data.random_split(InMemoryDataset(MyDataset(args, _train=False)), [args.validation_usage, 1-args.validation_usage])
 
         train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=4, pin_memory=True, persistent_workers=True)
-        train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=256, num_workers=4, pin_memory=True, persistent_workers=True)
-        test_loader = DataLoader(subset(testdataset, args.data_usage_for_bounds), batch_size=256, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
-        val_loader = DataLoader(subset(valdataset, args.data_usage_for_bounds), batch_size=256, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+        train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, num_workers=4, pin_memory=True, persistent_workers=True)
+        test_loader = DataLoader(subset(testdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(subset(valdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
         if args.dataset == "mnist":
             from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
         if args.dataset == "cifar10":
@@ -262,7 +262,7 @@ class RunModel(nn.Module):
         return test_loss.avg, accuracy.avg * 100
 
     def compute_hessian(self, args):
-        train_loader = ParallelDataloader(self.plain_train_dataset, batch_size=self.n_sample//10, shuffle=True)
+        train_loader = ParallelDataloader(self.plain_train_dataset, batch_size=args.batch_size_for_validation, shuffle=True)
         self.model.eval()
 
         hessian_traces: list[float] = []

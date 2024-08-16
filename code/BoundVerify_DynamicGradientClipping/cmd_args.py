@@ -20,6 +20,7 @@ parser.add_argument('--label-corrupt-prob', type=float, default=0)
 
 parser.add_argument('--seed', type=int, default=None)
 parser.add_argument('--batch-size', type=int, default=60)
+parser.add_argument('--batch-size-for-validation', type=int, default=256)
 parser.add_argument('--epochs', type=int, default=30)
 parser.add_argument('--bound-epoch', type=int, default=29)
 parser.add_argument('--learning-rate', type=float, default=0.01)
