@@ -99,7 +99,7 @@ class RunModel(nn.Module):
 
         def make_model():
             if args.arch == 'fc1':
-                model = fc1.fc1()
+                model = fc1.fc1(width=args.width)
                 # Weight Initialization
                 if args.fixinit:
                     print("loading...")
@@ -127,7 +127,7 @@ class RunModel(nn.Module):
                 else:
                     model.apply(weight_init)
             if args.arch == 'resnet':
-                model = resnet.resnet18()
+                model = resnet.resnet18(width=args.width)
                 model.apply(weight_init)
             if args.arch == 'vgg':
                 model = vgg.vgg11()
@@ -369,6 +369,18 @@ class RunModel(nn.Module):
                 '  '.join([f'{k}: {v}' for k, v in res.items()])
             )
 
+def has_full_run(path: str):
+    if os.path.isfile(path):
+        with open(path, 'r') as file:
+            lines = file.readlines()
+            for line in reversed(lines):
+                if 'INFO:root:Bound at Epoch 199 name: terminal_dispersion+flatness+cross_dispersion_full_utilization+reweight1000000000' in line:
+                    return True
+        return False
+    for file in os.listdir(path):
+        if has_full_run(os.path.join(path, file)):
+            return True
+    return False
 
 
 
@@ -376,6 +388,8 @@ def setup_logging(args):
     exp_dir = os.path.join('runs', args.exp_name)
     if not os.path.isdir(exp_dir):
         os.makedirs(exp_dir)
+    if has_full_run(exp_dir) and args.dont_repeat:
+        return exp_dir, None
     id = args.resume if args.resume is not None else datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + f'-seed{args.seed}'
     log_fn = os.path.join(exp_dir, "LOG.{0}.txt".format(id))
     logging.basicConfig(filename=log_fn, filemode='a', level=logging.DEBUG)
@@ -391,6 +405,10 @@ def setup_logging(args):
 def main():
     args = cmd_args.parse_args()
     exp_dir, id = setup_logging(args)
+    if id is None and args.dont_repeat:
+        print(exp_dir)
+        print("There is a full run for this parameter. Skip due to '--dont-repeat'")
+        return
     args.exp_dir = exp_dir
     args.id = id
     seed = args.seed

@@ -26,7 +26,7 @@ parser.add_argument('--bound-epoch', type=int, default=29)
 parser.add_argument('--learning-rate', type=float, default=0.01)
 parser.add_argument('--momentum', type=float, default=0.9)
 parser.add_argument('--weight-decay', type=float, default=0)
-parser.add_argument('--width', type=int, default=512)
+parser.add_argument('--width', type=float, default=None)
 parser.add_argument('--clip', type=float, default=0)
 parser.add_argument('--clip_factor', type=float, default=0.1)
 parser.add_argument('--stra', type=int, default=1)
@@ -61,6 +61,7 @@ parser.add_argument("--bound-freq", type=int, default=None, help="The frequency 
 parser.add_argument("--data-usage-for-bounds", type=float, default=1.0, help="The portion of data used when estimating the bounds. This can reduce the the time of bound estimation.")
 parser.add_argument("--tolerance", type=float, default=1e-2)
 parser.add_argument("--validation-usage", type=float, default=0.33, help="The portion of validation data, split from the testing set, that is used for optimizing the bound.")
+parser.add_argument("--dont-repeat", action='store_true')
 
 
 def format_experiment_name(args):
@@ -91,5 +92,11 @@ def parse_args():
         args.seed  = random.randint(0, 100000)
     if args.bound_freq <= 0:
         args.bound_freq = None
+    if args.arch == 'fc1':
+        args.width = int(args.width) if args.width is not None else 512
+    elif args.arch == 'resnet':
+        args.width = args.width if args.width is not None else 1.0
+    else:
+        raise NotImplemented(args.arch)
     args.exp_name = format_experiment_name(args)
     return args

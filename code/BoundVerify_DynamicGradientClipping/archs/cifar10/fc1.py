@@ -3,7 +3,7 @@ import torch.nn as nn
 
 class fc1(nn.Module):
 
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=10, width=512):
         super(fc1, self).__init__()
         self.classifier = nn.Sequential(
             nn.Linear(3*32*32, 512),
