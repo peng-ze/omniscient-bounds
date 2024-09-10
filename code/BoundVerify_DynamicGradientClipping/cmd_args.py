@@ -54,8 +54,8 @@ parser.add_argument("--traj-reweight", type=float, nargs='+', default=[])
 
 parser.add_argument('--name', default='', help='Experiment name')
 
-parser.add_argument("--k", "-k", "--parapllel-models", type=int, default=5, help="The number of parallel models for variance estimation")
-parser.add_argument("--loss-upperbound", type=float, default=2.0, help="The scaling factor in the upperbound of Clipped Cross Entropy Loss in evaluation and bound estimation. Setting this value to u will set the upperbound to u * log C, where C is the number of classes.")
+parser.add_argument("--k", "-k", "--parapllel-models", type=int, default=6, help="The number of parallel models for variance estimation")
+parser.add_argument("--loss-upperbound", type=float, default=12.0, help="The scaling factor in the upperbound of Clipped Cross Entropy Loss in evaluation and bound estimation. Setting this value to u will set the upperbound to u * log C, where C is the number of classes.")
 parser.add_argument("--train-loss-upperbound", type=float, default=None, help="The scaling factor in the upperbound of Clipped Cross Entropy Loss in training. Setting this value to u will set the upperbound to u * log C, where C is the number of classes.")
 parser.add_argument("--bound-freq", type=int, default=None, help="The frequency of bound estimation. Defaults to `None`, which means only estimate the bound at the end of the whole training.")
 parser.add_argument("--data-usage-for-bounds", type=float, default=1.0, help="The portion of data used when estimating the bounds. This can reduce the the time of bound estimation.")
