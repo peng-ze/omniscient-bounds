@@ -61,7 +61,6 @@ class RunModel(nn.Module):
         # self.gradient_norm = []
         # self.gradient_variance = []
         # self.mi = 0
-        self.clip = args.clip
 
         self.bounds: 'list[Bound]' = nn.ModuleList([
             GradientDispersionBound(), 
@@ -207,38 +206,14 @@ class RunModel(nn.Module):
         output = self.model(imgs)
         train_loss = self.criterion(output, targets)
         train_loss.backward()
-        # sample_grad_norm = torch.zeros(imgs.shape[0])
-        # batch_gradient_norm = torch.tensor(0.0)
-        # var = 0
-        # for param in self.model.parameters():
-            # var = var + ((imgs.shape[0]**2) * param.variance).sum()
-            # sample_grad_norm += param.batch_l2.cpu() * (imgs.shape[0] ** 2)
-            # batch_gradient_norm += param.grad.data.norm(2).square().cpu()
-        # max_grad_norm = batch_gradient_norm.sqrt()
-        if self.clip > 0 and self.epoch > args.clip_start:
-            raise NotImplemented()
-            if self.grad_norm < max_grad_norm:
-                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
-                clip_grad_norm_(self.model.parameters(), self.clip)
-                if args.stra == 1:
-                    self.grad_norm = max_grad_norm
-                self.clip = args.clip_factor * self.grad_norm
-            else:
-                self.grad_norm = max_grad_norm
         for bound in self.bounds:
             bound.update(self.model, lr=self.optimizer.param_groups[0]['lr'])
         self.optimizer.step()
-        # self.sample_mi[idx] += var.cpu()
-        # self.mi += var.item()
-        # self.sample_mi[range(self.n_sample) != idx] *= 1
 
         with torch.no_grad():
             loss_fn = ClippedCrossEntropyLoss(clip=self.loss_clip, reduction='none')
             self.losses_all.append(loss_fn(torch.cat(output), torch.cat(targets)).flatten())
         self.n_iter += 1
-        # self.gradient_norm.append(max_grad_norm.item())
-        # self.gradient_variance.append(var.item())
-        # return train_loss, sample_grad_norm.sqrt().mean().item(),  var.item(), max_grad_norm.item()
         self.model.zero_grad(True)
         self.optimizer.zero_grad(True)
 
@@ -268,21 +243,7 @@ class RunModel(nn.Module):
         hessian_traces: list[float] = []
         for (model, loader) in zip(self.model.models, train_loader.loaders): 
             empirical_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
-            # inputs, targets, _ = next(iter(loader))
-            # inputs, targets = inputs.to(device), targets.to(device)
-            # hessian_comp_empirical = hessian(model, ClippedCrossEntropyLoss(clip=self.loss_clip), data=(inputs, targets), cuda=True)
-            # empirical_trace = np.mean(hessian_comp_empirical.trace())
-            # hessian_comp_empirical = None; model.zero_grad(True)
-            
             population_trace = 0
-            # population_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(self.test_loader, [0,1]))
-
-           #  test_inputs, test_targets, _ = next(iter(self.test_loader))
-            # test_inputs, test_targets = test_inputs.to(device), test_targets.to(device)
-            # hessian_comp_population = hessian(model, ClippedCrossEntropyLoss(clip=self.loss_clip), data=(test_inputs, test_targets), cuda=True)
-            # population_trace = np.mean(hessian_comp_population.trace())
-            # hessian_comp_population = None; model.zero_grad(True)
-
             trace =  empirical_trace - population_trace
             hessian_traces.append(float(trace))
         return hessian_traces 
@@ -348,20 +309,6 @@ class RunModel(nn.Module):
 
     def log_bound(self, epoch):
         assert self.args.resume is None
-        # tr_losses, tr_acces, ts_losses, ts_acces = self.train_model(self.args)
-        # state_dict = self.state_dict()
-        # state_dict['epoch'] = epoch
-        # torch.save(state_dict, os.path.join(self.args.exp_dir, self.args.id + '.pth'))
-        # else:
-            # logging.info(f"Loading from {self.args.exp_dir}/{self.args.id}.pth")
-            # state_dict = torch.load(os.path.join(self.args.exp_dir, self.args.id + '.pth'))
-            # state_dict: dict
-            # state_dict.pop('epoch')
-            # self.load_state_dict(state_dict, strict=True)
-            # state_dict = None
-            # ts_loss, test_acc = self.validate_test(self.test_loader, self.model, args)
-            # print(ts_loss, test_acc)
-
         results = self.compute_bound(self.args)
         self.model.zero_grad(True)
         for res in results:
@@ -421,7 +368,7 @@ def main():
 
     runmodel = RunModel(args).to(device)
     logging.info(f'Model: {args.arch}   Dataset: {args.dataset}  lr: {args.learning_rate}   batch size: {args.batch_size} '
-                f' Corrupt level: {args.label_corrupt_prob}  width: {args.width} Clip factor: {args.clip_factor} Clip start: {args.clip_start} Clip stratagy: {args.stra} ' 
+                f' Corrupt level: {args.label_corrupt_prob}  width: {args.width}' 
                 f' Trajectory samples: {args.k}  Seed: {seed} Traectory Term Reweight: {args.traj_reweight} '
                 f' Loss Bound (training): {args.train_loss_upperbound}  Loss Bound (evaluation): {args.loss_upperbound} '
                 )

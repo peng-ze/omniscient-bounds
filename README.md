@@ -26,10 +26,6 @@ TASK=cifar10 bash scripts/all.sh --batch-size-for-validation 512 --dont-repeat
 ```
 After finishing, results can be found in `runs/`.
 
-### Some Options
-
-Use `--name <experiment_name>` to add a prefix to the names of experiment records.
-
-Use `--arch <architecture_name>` to select architectures.
+### Run a Subset of Experiments 
 
 Run `scripts/weight_decay.sh`, `scripts/label_corruption.sh` or `scripts/lrbs.sh`, etc. instead of `scripts/all.sh` to run experiments with the corresponding hyperaprameter subset varied instead of all experiments.
