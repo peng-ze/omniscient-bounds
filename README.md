@@ -1,6 +1,6 @@
 # Leveraging Flatness to Improve Information-Theoretic Generalization Bounds for SGD
 
-The codes are modifed from the suplementray materials of 
+The code is modified from the supplementary materials of 
 [On the Generalization of Neural Networks Trained with SGD: Information-Theoretical Bounds and Implications](https://openreview.net/forum?id=4i23Bjlh4Y9)
 
 
@@ -24,8 +24,8 @@ To run the experiments on MNIST and CIFAR10:
 TASK=mnist bash scripts/all.sh --batch-size-for-validation 4096 --dont-repeat
 TASK=cifar10 bash scripts/all.sh --batch-size-for-validation 512 --dont-repeat
 ```
-After finishing, results can be found in `runs/`.
+Once completed, the results can be found in `runs/`.
 
 ### Run a Subset of Experiments 
 
-Run `scripts/weight_decay.sh`, `scripts/label_corruption.sh` or `scripts/lrbs.sh`, etc. instead of `scripts/all.sh` to run experiments with the corresponding hyperaprameter subset varied instead of all experiments.
+Run `scripts/weight_decay.sh`, `scripts/label_corruption.sh` or `scripts/lrbs.sh`, etc. instead of `scripts/all.sh` to run experiments with the corresponding hyperparameter subset varied instead of all experiments.
