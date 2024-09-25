@@ -369,16 +369,16 @@ class RunModel(nn.Module):
                 '  '.join([f'{k}: {v}' for k, v in res.items()])
             )
 
-def has_full_run(path: str):
+def has_full_run(path: str, epoch: int):
     if os.path.isfile(path):
         with open(path, 'r') as file:
             lines = file.readlines()
             for line in reversed(lines):
-                if 'INFO:root:Bound at Epoch 199 name: terminal_dispersion+flatness+cross_dispersion_full_utilization+reweight1000000000' in line:
+                if f'INFO:root:Bound at Epoch {epoch-1} name: terminal_dispersion+flatness+cross_dispersion_full_utilization+reweight1000000000' in line:
                     return True
         return False
     for file in os.listdir(path):
-        if has_full_run(os.path.join(path, file)):
+        if has_full_run(os.path.join(path, file), epoch):
             return True
     return False
 
@@ -388,7 +388,7 @@ def setup_logging(args):
     exp_dir = os.path.join('runs', args.exp_name)
     if not os.path.isdir(exp_dir):
         os.makedirs(exp_dir)
-    if has_full_run(exp_dir) and args.dont_repeat:
+    if has_full_run(exp_dir, args.epochs) and args.dont_repeat:
         return exp_dir, None
     id = args.resume if args.resume is not None else datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + f'-seed{args.seed}'
     log_fn = os.path.join(exp_dir, "LOG.{0}.txt".format(id))
