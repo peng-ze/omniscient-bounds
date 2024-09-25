@@ -26,7 +26,7 @@ parser.add_argument('--bound-epoch', type=int, default=29)
 parser.add_argument('--learning-rate', type=float, default=0.01)
 parser.add_argument('--momentum', type=float, default=0.9)
 parser.add_argument('--weight-decay', type=float, default=0)
-parser.add_argument('--width', type=float, default=None)
+parser.add_argument('--width', type=int, default=None)
 parser.add_argument('--clip', type=float, default=0)
 parser.add_argument('--clip_factor', type=float, default=0.1)
 parser.add_argument('--stra', type=int, default=1)
@@ -95,7 +95,7 @@ def parse_args():
     if args.arch == 'fc1':
         args.width = int(args.width) if args.width is not None else 512
     elif args.arch == 'resnet':
-        args.width = args.width if args.width is not None else 1.0
+        args.width = args.width if args.width is not None else 64
     else:
         raise NotImplemented(args.arch)
     args.exp_name = format_experiment_name(args)

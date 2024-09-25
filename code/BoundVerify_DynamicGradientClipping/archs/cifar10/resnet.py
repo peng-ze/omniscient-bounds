@@ -97,6 +97,8 @@ class ResNet(nn.Module):
 
 
 def resnet18(width=1.0):
+    if width > 10:
+        width = width / 64
     return ResNet(BasicBlock, [2,2,2,2], width=width)
 
 def ResNet34():
