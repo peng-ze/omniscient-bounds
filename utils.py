@@ -5,11 +5,21 @@ import torch.nn as nn
 import torch.nn.init as init
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
+from PIL.Image import Image
 import os
 from typing import Iterable
+import gc
 
 class MyDataset(Dataset):
-    def __init__(self, args, _train=True):
+    normalize = transforms.Normalize(
+        mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
+        std=[x / 255.0 for x in [63.0, 62.1, 66.7]]
+    )
+    transform = transforms.Compose([
+                    transforms.ToTensor(),
+                    normalize,
+                ])
+    def __init__(self, args, _train=True, no_transform=False):
         self.ds = args.dataset
 
         if self.ds == "mnist":
@@ -22,13 +32,10 @@ class MyDataset(Dataset):
             args.num_classes = 10
 
         if self.ds == "cifar10":
-            normalize = transforms.Normalize(mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
-                                             std=[x / 255.0 for x in [63.0, 62.1, 66.7]])
-
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                normalize,
-            ])
+            if not no_transform:
+                transform = self.transform 
+            else:
+                transform = None
             if args.label_corrupt_prob == 0:
                 self.cifar10 = datasets.CIFAR10(root=args.data_path, train=_train, download=True, transform=transform)
             else:
@@ -89,7 +96,7 @@ class AugmentationDataset(Dataset):
         self.target_transform = target_transform 
 
     def do_transform(self, Z, transform):
-        if isinstance(Z, torch.Tensor) or isinstance(Z, int):
+        if isinstance(Z, torch.Tensor) or isinstance(Z, int) or isinstance(Z, Image):
             return transform(Z)
         return [self.do_transform(z, transform) for z in Z]
 
@@ -267,3 +274,7 @@ def ClippedCrossEntropyLoss(
 ):
     return ClippedLoss(nn.CrossEntropyLoss(weight, size_average, ignore_index, reduce=None, reduction='none', label_smoothing=label_smoothing), clip=clip, reduction=reduction)
 
+
+def clean_cache():
+    gc.collect()
+    torch.cuda.empty_cache()

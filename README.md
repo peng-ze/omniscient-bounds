@@ -23,6 +23,7 @@ To run the experiments on MNIST and CIFAR10:
 ```bash
 TASK=mnist bash scripts/all.sh --batch-size-for-validation 4096 --dont-repeat
 TASK=cifar10 bash scripts/all.sh --batch-size-for-validation 512 --dont-repeat
+TASK=cifar10_vit bash scripts/all.sh --batch-size-for-validation 512 --dont-repeat
 ```
 Once completed, the results can be found in `runs/`.
 

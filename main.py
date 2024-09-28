@@ -12,7 +12,6 @@ import torchvision.datasets as datasets
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, Subset
 from torch.distributions import Normal
-from pyhessian import hessian  # Hessian computation
 from utils import *
 from FitsubGaussian import gaussian_net
 import cmd_args
@@ -51,9 +50,31 @@ class RunModel(nn.Module):
         self.criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.train_loss_clip))
         self.accuracy = ParallelLoss(accuracy, reduction='mean')
         self.val_criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.loss_clip), reduction='mean')
-        self.optimizer = torch.optim.SGD(self.model.parameters(), args.learning_rate,
-                                         momentum=args.momentum,
-                                         weight_decay=args.weight_decay)
+        if args.optimizer.lower() == 'sgd':
+            self.optimizer = torch.optim.SGD(
+                self.model.parameters(), args.learning_rate,
+                momentum=args.momentum,
+                weight_decay=args.weight_decay
+            )
+        elif args.optimizer.lower() == 'adamw':
+            self.optimizer = torch.optim.AdamW(
+                self.model.parameters(), args.learning_rate,
+                weight_decay=args.weight_decay
+            )
+
+        if args.scheduler is not None:
+            if args.scheduler.lower() == 'cosine':
+                self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.args.epochs-self.args.warmup_epochs, eta_min=1e-5, verbose=True)
+            else:
+                raise NotImplemented()
+        else:
+            self.scheduler = None
+        
+        if args.warmup_epochs is not None:
+            self.warmup_scheduler = torch.optim.lr_scheduler.LinearLR(self.optimizer, start_factor=1/args.warmup_epochs, end_factor=1.0, total_iters=args.warmup_epochs-1, last_epoch=-1, verbose=True)
+        else:
+            self.warmup_scheduler = None
+
         self.grad_norm = 999999
         self.losses_all = [] 
         self.sigma = 0
@@ -76,25 +97,39 @@ class RunModel(nn.Module):
 
 
     def get_data_model(self, args, shuffle_train=True):
-        training_data = make_parallel_datasets(InMemoryDataset(MyDataset(args, _train=True)), args.k)
-        self.plain_train_dataset = training_data
-        self.traindataset = [AugmentationDataset(d, transform=(transforms.Compose([
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomResizedCrop(32)
-        ]) if 'cifar' in args.dataset else lambda x:x)) for d in training_data]
-
-        train_test_dataset = training_data 
-
-        valdataset, testdataset = torch.utils.data.random_split(InMemoryDataset(MyDataset(args, _train=False)), [args.validation_usage, 1-args.validation_usage])
-
-        train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=4, pin_memory=True, persistent_workers=True)
-        train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, num_workers=4, pin_memory=True, persistent_workers=True)
-        test_loader = DataLoader(subset(testdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
-        val_loader = DataLoader(subset(valdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
         if args.dataset == "mnist":
             from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
         if args.dataset == "cifar10":
-            from archs.cifar10 import AlexNet, LeNet5, fc1, vgg, resnet, densenet
+            from archs.cifar10 import AlexNet, LeNet5, fc1, vgg, resnet, densenet, vit
+
+        if 'cifar' in args.dataset:
+            if args.arch == 'vit':
+                train_transform, test_transform = vit.vit_transform()
+            else:
+                train_transform = transforms.Compose([
+                    transforms.RandomHorizontalFlip(),
+                    transforms.RandomResizedCrop(32),
+                    MyDataset.transform
+                ]) 
+                test_transform = None 
+        else:
+            train_transform = None
+            test_transform = None
+
+        assert test_transform is None
+
+        plain_data = make_parallel_datasets(InMemoryDataset(MyDataset(args, _train=True, no_transform=True)), args.k)
+        self.unaugmented_train_dataset = [AugmentationDataset(d, transform=MyDataset.transform) for d in plain_data] 
+        self.traindataset = [AugmentationDataset(d, transform=train_transform) for d in plain_data]
+
+        train_test_dataset = self.unaugmented_train_dataset 
+
+        valdataset, testdataset = torch.utils.data.random_split(InMemoryDataset(MyDataset(args, _train=False)), [args.validation_usage, 1-args.validation_usage],)
+
+        train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=4, pin_memory=True, persistent_workers=True)
+        train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, num_workers=8, pin_memory=True, persistent_workers=True)
+        test_loader = DataLoader(subset(testdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(subset(valdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
 
         def make_model():
             if args.arch == 'fc1':
@@ -131,10 +166,12 @@ class RunModel(nn.Module):
             if args.arch == 'vgg':
                 model = vgg.vgg11()
                 model.apply(weight_init)
+            if args.arch == 'vit':
+                model = vit.vit_small(width=args.width, dropout=args.dropout)
             return model
 
         model = ParallelModel(make_model, k=args.k).to(device)
-        self.n_sample = len(self.plain_train_dataset[0])
+        self.n_sample = len(self.unaugmented_train_dataset[0])
 
         return train_loader, train_test_loader, val_loader, test_loader, model
     
@@ -152,6 +189,9 @@ class RunModel(nn.Module):
         ts_losses = []
         ts_acces = []
         logging.info('  '.join([f'{bound.name}.traj: {bound.trajectory_term(self.model):.3f}' for bound in self.bounds]))
+
+        for b in self.bounds:
+            b.init(self.model)
 
         for self.epoch in range(start_epoch, epochs):
             t = time.time()
@@ -191,6 +231,13 @@ class RunModel(nn.Module):
         for batch_idx, data in enumerate(tqdm(train_loader)):
             inputs, labels, idx = data
             self.train_batch(inputs, labels, idx, args)
+        
+        if self.args.warmup_epochs is not None and self.epoch < self.args.warmup_epochs:
+            if self.warmup_scheduler is not None:
+                self.warmup_scheduler.step()
+        else:
+            if self.scheduler is not None:
+                self.scheduler.step()
 
     def train_batch(self, imgs, targets, idx, args):
         self.model.train()
@@ -209,6 +256,8 @@ class RunModel(nn.Module):
         for bound in self.bounds:
             bound.update(self.model, lr=self.optimizer.param_groups[0]['lr'])
         self.optimizer.step()
+        for bound in self.bounds:
+            bound.update_after_step(self.model, lr=self.optimizer.param_groups[0]['lr'])
 
         with torch.no_grad():
             loss_fn = ClippedCrossEntropyLoss(clip=self.loss_clip, reduction='none')
@@ -237,12 +286,12 @@ class RunModel(nn.Module):
         return test_loss.avg, accuracy.avg * 100
 
     def compute_hessian(self, args):
-        train_loader = ParallelDataloader(self.plain_train_dataset, batch_size=args.batch_size_for_validation, shuffle=True)
+        train_loader = ParallelDataloader(self.unaugmented_train_dataset, batch_size=args.batch_size_for_validation, shuffle=True)
         self.model.eval()
 
         hessian_traces: list[float] = []
         for (model, loader) in zip(self.model.models, train_loader.loaders): 
-            empirical_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
+            empirical_trace = 1 # average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
             population_trace = 0
             trace =  empirical_trace - population_trace
             hessian_traces.append(float(trace))

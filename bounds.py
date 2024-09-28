@@ -1,23 +1,26 @@
 import torch
 from torch import nn, Tensor
 from abc import abstractmethod
+
+import torch.utils
 from parallel import ParallelModel, ParallelDataloader, SelectedDataFieldDataLoader, ParallelLoss
 from pyhessian import hessian  
 from torch.utils.data import DataLoader
 from myhessian import iHVP, HVP, _inner_product
-from utils import ClippedCrossEntropyLoss
+from utils import ClippedCrossEntropyLoss, clean_cache
 from tqdm.auto import tqdm
 import numpy as np
 def average_hessian_trace(clip, model, dataloader: DataLoader):
-        trace_sum = 0
-        count = 0
-        for X, Y in dataloader:
-            model.zero_grad(True)
-            batch_mean_trace = np.mean(hessian(model, criterion=ClippedCrossEntropyLoss(clip), data=(X, Y), cuda=True).trace())
-            trace_sum = trace_sum + batch_mean_trace * len(Y)
-            count += len(Y)
-            model.zero_grad(True)
-        return trace_sum / count
+    trace_sum = 0
+    count = 0
+    for X, Y in tqdm(dataloader, "Computing Hessian trace"):
+        model.zero_grad(True)
+        batch_mean_trace = np.mean(hessian(model, criterion=ClippedCrossEntropyLoss(clip), data=(X, Y), cuda=True).trace())
+        trace_sum = trace_sum + batch_mean_trace * len(Y)
+        count += len(Y)
+        model.zero_grad(True)
+        clean_cache()
+    return trace_sum / count
 
 
 class Bound(nn.Module):
@@ -26,7 +29,13 @@ class Bound(nn.Module):
         super().__init__()
         self.computed_value = None
     @abstractmethod
+    def init(self, parallel_model: ParallelModel):
+        pass
+    @abstractmethod
     def update(self, parallel_model: ParallelModel, lr: float, *args, **kwargs):
+        pass
+    @abstractmethod
+    def update_after_step(self, parallel_model: ParallelModel, lr: float, *args, **kwargs):
         pass
     @abstractmethod
     def trajectory_term(self, parallel_model: ParallelModel, *args, **kwargs):
@@ -44,6 +53,7 @@ class GradientDispersionBound(Bound):
         super().__init__()
         self._n_iter = nn.Parameter(torch.zeros([1], dtype=torch.int), requires_grad=False)
         self._gradient_dispersion = nn.Parameter(torch.zeros([1]), requires_grad=False) 
+        self.params: list[Tensor] = None
 
     @property
     def n_iter(self):
@@ -51,10 +61,40 @@ class GradientDispersionBound(Bound):
     @property
     def gradient_dispersion(self):
         return self._gradient_dispersion.data
+    
 
     @torch.no_grad()
-    def update(self, parallel_model: ParallelModel, lr: float, *args, **kwargs):
-        self._gradient_dispersion.data += (lr ** 2) * parallel_model.gradient_dispersion().detach()
+    def flattened_param(self, model: nn.Module):
+        res = []
+        for p in model.parameters():
+            res.append(p.detach().flatten())
+        return torch.cat(res).flatten()
+
+    def copy_param(self, parallel_model: ParallelModel):
+        res: list[Tensor] = []
+        for m in parallel_model:
+            res.append(self.flattened_param(m))
+        return res
+
+    @torch.no_grad()
+    def init(self, parallel_model: ParallelModel):
+        self.params = self.copy_param(parallel_model)
+
+    @torch.no_grad()
+    def step_gradient_dispersion(self, parallel_model: ParallelModel):
+        new = self.copy_param(parallel_model) 
+
+        delta = torch.stack([n - o for n, o in zip(new, self.params)])
+        res = delta.var(dim=0).sum()
+
+        self.params = new
+
+        return res
+        
+
+    @torch.no_grad()
+    def update_after_step(self, parallel_model: ParallelModel, lr: float, *args, **kwargs):
+        self._gradient_dispersion.data += self.step_gradient_dispersion(parallel_model) 
         self._n_iter.data += 1
     
     @torch.no_grad()
@@ -211,6 +251,7 @@ class TerminalDispersionBound(Bound):
             # population_hessian_trace = 0
             hessian_traces.append((hessian_trace - population_hessian_trace).abs())
             delta_losses.append((empirical_delta_loss - population_delta_loss).abs())
+            clean_cache()
         return torch.stack(delta_losses).mean(),  torch.stack(hessian_traces).mean()
 
     @torch.no_grad()

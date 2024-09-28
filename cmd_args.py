@@ -41,7 +41,7 @@ parser.add_argument('--proxy', type=str2bool, nargs='?',
                         const=False, default=False, help='Whether to use perturbed training')                         
                         
 
-parser.add_argument('--arch', default='fc1', choices=['fc1', 'lenet', 'alexnet', 'resnet','vgg'])
+parser.add_argument('--arch', default='fc1', choices=['fc1', 'lenet', 'alexnet', 'resnet','vgg', 'vit'])
 
 parser.add_argument("--print-freq", default=1, type=int)
 parser.add_argument("--valid-freq", default=1, type=int)
@@ -58,6 +58,11 @@ parser.add_argument("--data-usage-for-bounds", type=float, default=1.0, help="Th
 parser.add_argument("--tolerance", type=float, default=1e-2, help="(Relative) tolerance when inverting Hessians.")
 parser.add_argument("--validation-usage", type=float, default=0.33, help="The portion of validation data, split from the testing set, that is used for optimizing the bound.")
 parser.add_argument("--dont-repeat", action='store_true', help="Skip experiments if there have been records with the same hyperparameter and longer epochs (they may have different random seeds).")
+
+parser.add_argument("--dropout", type=float, default=0.0)
+parser.add_argument("--warmup-epochs", type=int, default=None)
+parser.add_argument("--optimizer", type=str, default="SGD", choices=["SGD", "AdamW"])
+parser.add_argument("--scheduler", type=str, default=None, choices=[None, "cosine"])
 
 
 def format_experiment_name(args):
@@ -92,6 +97,10 @@ def parse_args():
         args.width = int(args.width) if args.width is not None else 512
     elif args.arch == 'resnet':
         args.width = args.width if args.width is not None else 64
+    elif args.arch == 'vit':
+        if args.width > 10:
+            args.width = args.width / 64
+        args.width = args.width if args.width is not None else 1.0
     else:
         raise NotImplemented(args.arch)
     args.exp_name = format_experiment_name(args)
