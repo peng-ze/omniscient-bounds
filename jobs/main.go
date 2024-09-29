@@ -5,7 +5,6 @@ import "os"
 import "strings"
 import "strconv"
 import (
-    // "bufio"
     "net"
 	"io"
 	"os/exec"
@@ -23,13 +22,11 @@ type CommandData struct {
 
 
 func socketListener(socketPath string, ch chan CommandData) {
-    // 检查 socket 文件是否已存在
     if _, err := os.Stat(socketPath); err == nil {
         fmt.Fprintf(os.Stderr, "Error: socket file %s already exists. Exiting...\n", socketPath)
-        os.Exit(1) // 退出程序，返回非零状态码表示错误
+        os.Exit(1) 
     }
 
-    // 创建 Unix Domain Socket 监听
     listener, err := net.Listen("unix", socketPath)
     if err != nil {
         fmt.Fprintf(os.Stderr, "Error creating listener: %v\n", err)
@@ -75,15 +72,12 @@ func createLogger(path string, gpu_id string, local_id int) (*os.File, string, e
 }
 
 func setEnv(env []string, key, value string) []string {
-    // 检查环境变量是否已经存在
     for i, v := range env {
         if strings.HasPrefix(v, key+"=") {
-            // 替换现有的环境变量
             env[i] = fmt.Sprintf("%s=%s", key, value)
             return env
         }
     }
-    // 如果不存在，则添加新的环境变量
     return append(env, fmt.Sprintf("%s=%s", key, value))
 }
 
@@ -107,7 +101,7 @@ func execute(ctx context.Context, gpu_id string, logFile *os.File, command strin
     cmdArgs := parts[1:]
 
 	cmd := exec.CommandContext(ctx, cmdName, cmdArgs...)
-    cmd.Env = envVars // 设置环境变量
+    cmd.Env = envVars
 
 	cmd.Stdout = io.MultiWriter(logFile, os.Stdout)
     cmd.Stderr = io.MultiWriter(logFile, os.Stderr) 
@@ -147,7 +141,7 @@ func main() {
         <-sigs
         feedback_channel <- "Received termination signal, shutting down..."
 
-        cancel() // 取消上下文，通知所有 worker 终止
+        cancel() 
     }()
 
 

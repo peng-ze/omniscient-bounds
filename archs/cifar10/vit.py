@@ -83,7 +83,7 @@ class MyMHA(nn.MultiheadAttention):
         elif torch.is_autocast_enabled():
             why_not_fast_path = "autocast is enabled"
 
-        why_not_fast_path = "something in the fast path is not implemented when computing Hessian"
+        why_not_fast_path = "something in the fast path is not implemented when computing Hessian" # HACK
 
         if not why_not_fast_path:
             tensor_args = (
