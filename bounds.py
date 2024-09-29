@@ -87,15 +87,16 @@ class GradientDispersionBound(Bound):
         delta = torch.stack([n - o for n, o in zip(new, self.params)])
         res = delta.var(dim=0).sum()
 
-        self.params = new
-
-        return res
+        return res, new
         
 
     @torch.no_grad()
     def update_after_step(self, parallel_model: ParallelModel, lr: float, *args, **kwargs):
-        self._gradient_dispersion.data += self.step_gradient_dispersion(parallel_model) 
+        step_dispersion, new_params = self.step_gradient_dispersion(parallel_model) 
+        self._gradient_dispersion.data += step_dispersion
         self._n_iter.data += 1
+
+        self.params = new_params
     
     @torch.no_grad()
     def trajectory_term(self, parallel_model: ParallelModel, *args, **kwargs):
