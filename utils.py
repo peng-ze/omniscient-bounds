@@ -10,6 +10,11 @@ import os
 from typing import Iterable
 import gc
 
+def optional_to_tensor(x):
+    if isinstance(x, torch.Tensor):
+        return x
+    return torch.nn.functional.to_tensor(x)
+
 class MyDataset(Dataset):
     normalize = transforms.Normalize(
         mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
@@ -19,11 +24,15 @@ class MyDataset(Dataset):
                     transforms.ToTensor(),
                     normalize,
                 ])
+    mnist_transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
     def __init__(self, args, _train=True, no_transform=False):
         self.ds = args.dataset
 
         if self.ds == "mnist":
-            transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+            if no_transform:
+                transform = None
+            else:
+                transform =  self.mnist_transform
             if args.label_corrupt_prob == 0:
                 self.mnist = datasets.MNIST(root=args.data_path, train=_train, download=True, transform=transform)
             else:

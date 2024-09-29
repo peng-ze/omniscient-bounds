@@ -113,13 +113,13 @@ class RunModel(nn.Module):
                 ]) 
                 test_transform = None 
         else:
-            train_transform = None
+            train_transform = MyDataset.mnist_transform  
             test_transform = None
 
         assert test_transform is None
 
         plain_data = make_parallel_datasets(InMemoryDataset(MyDataset(args, _train=True, no_transform=True)), args.k)
-        self.unaugmented_train_dataset = [AugmentationDataset(d, transform=MyDataset.transform) for d in plain_data] 
+        self.unaugmented_train_dataset = [AugmentationDataset(d, transform=MyDataset.transform if args.dataset == 'cifar10' else MyDataset.mnist_transform) for d in plain_data] 
         self.traindataset = [AugmentationDataset(d, transform=train_transform) for d in plain_data]
 
         train_test_dataset = self.unaugmented_train_dataset 
