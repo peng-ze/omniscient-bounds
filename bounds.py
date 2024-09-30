@@ -13,6 +13,7 @@ import numpy as np
 def average_hessian_trace(clip, model, dataloader: DataLoader):
     trace_sum = 0
     count = 0
+    clean_cache()
     for X, Y in tqdm(dataloader, "Computing Hessian trace"):
         model.zero_grad(True)
         batch_mean_trace = np.mean(hessian(model, criterion=ClippedCrossEntropyLoss(clip), data=(X, Y), cuda=True).trace())
@@ -243,6 +244,7 @@ class TerminalDispersionBound(Bound):
 
 
     def punishment(self, Delta: 'list[list[Tensor]]', parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, test_data_loader: DataLoader):
+        clean_cache()
         torch.cuda.synchronize()
         hessian_traces = []
         delta_losses = []

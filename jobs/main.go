@@ -20,8 +20,9 @@ type CommandData struct {
     Env     map[string]string `json:"env"`
 }
 
+type worker_maker func(string, int)
 
-func socketListener(socketPath string, ch chan CommandData) {
+func socketListener(socketPath string, ch chan CommandData, makeWorker worker_maker) {
     if _, err := os.Stat(socketPath); err == nil {
         fmt.Fprintf(os.Stderr, "Error: socket file %s already exists. Exiting...\n", socketPath)
         os.Exit(1) 
@@ -43,12 +44,14 @@ func socketListener(socketPath string, ch chan CommandData) {
             continue
         }
 
-        go handleConnection(conn, ch)
+        go handleConnection(conn, ch, makeWorker)
     }
 }
 
-func handleConnection(conn net.Conn, ch chan CommandData) {
+
+func handleConnection(conn net.Conn, ch chan CommandData, makeWorker worker_maker) {
     defer conn.Close()
+    append_id := 0
 
     var data CommandData
     decoder := json.NewDecoder(conn)
@@ -56,8 +59,16 @@ func handleConnection(conn net.Conn, ch chan CommandData) {
         fmt.Println("Error decoding data:", err)
         return
     }
+    strAddWorker := "AddWorker"
+    if strings.Contains(data.Command, strAddWorker) {
+        gpu_id := strings.TrimSpace(data.Command[len(strAddWorker):])
+        append_id = append_id - 1
+        fmt.Println("Adding new worker", append_id, "at GPU", gpu_id)
+        makeWorker(gpu_id, append_id)
+    } else {
+	    ch <- data
+    }
 
-	ch <- data
 }
 
 func createLogger(path string, gpu_id string, local_id int) (*os.File, string, error) {
@@ -144,15 +155,19 @@ func main() {
         cancel() 
     }()
 
+    makeWorker := func(gpu_id string, local_id int) {
+		go worker(ctx, log_path, gpu_id, local_id, channel, feedback_channel)
+    }
+
 
 	for _, gpu_id := range gpu_ids {
 		for i := 0; i < workers_per_gpu; i++ {
-			go worker(ctx, log_path, gpu_id, i, channel, feedback_channel)
+            makeWorker(gpu_id, i)
 		}
 	}
 
 	socketPath := os.Getenv("SOCKET_PATH")
-	go socketListener(socketPath, channel)
+	go socketListener(socketPath, channel, makeWorker)
 	defer os.Remove(socketPath)
 
 
