@@ -4,7 +4,9 @@ import datetime
 import numpy as np
 import torch
 from torch import Tensor
+import torch.amp
 import torch.nn as nn
+import torch.utils
 import torch.utils
 import torch.utils
 import torchvision.transforms as transforms
@@ -95,6 +97,7 @@ class RunModel(nn.Module):
         ]
         )
 
+        self.scaler = torch.cuda.amp.GradScaler() if self.args.amp else None
 
     def get_data_model(self, args, shuffle_train=True):
         if args.dataset == "mnist":
@@ -228,7 +231,7 @@ class RunModel(nn.Module):
 
     def train_epoch(self, args, train_loader):
         self.model.train()
-        for batch_idx, data in enumerate(tqdm(train_loader)):
+        for batch_idx, data in enumerate(tqdm(train_loader, f"Epoch {self.epoch}")):
             inputs, labels, idx = data
             self.train_batch(inputs, labels, idx, args)
         
@@ -238,6 +241,10 @@ class RunModel(nn.Module):
         else:
             if self.scheduler is not None:
                 self.scheduler.step()
+
+    def clip_gradient(self, model: ParallelModel):
+        for m in model:
+            torch.nn.utils.clip_grad_norm_(m.parameters(), 1.0)
 
     def train_batch(self, imgs, targets, idx, args):
         self.model.train()
@@ -250,12 +257,28 @@ class RunModel(nn.Module):
             targets = [d.to(device) for d in targets]
         else:
             imgs, targets = imgs.to(device), targets.to(device)
-        output = self.model(imgs)
-        train_loss = self.criterion(output, targets)
-        train_loss.backward()
+
+        with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.scaler is not None):
+            output = self.model(imgs)
+            train_loss = self.criterion(output, targets)
+
+        if self.scaler is not None:
+            self.scaler.scale(train_loss).backward()
+            self.scaler.unscale_(self.optimizer)
+        else:
+            train_loss.backward()
+
         for bound in self.bounds:
             bound.update(self.model, lr=self.optimizer.param_groups[0]['lr'])
-        self.optimizer.step()
+        if self.args.gradient_clipping:
+            self.clip_gradient(self.model)
+
+        if self.scaler is not None:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            self.optimizer.step()
+        
         for bound in self.bounds:
             bound.update_after_step(self.model, lr=self.optimizer.param_groups[0]['lr'])
 
@@ -291,7 +314,7 @@ class RunModel(nn.Module):
 
         hessian_traces: list[float] = []
         for (model, loader) in zip(self.model.models, train_loader.loaders): 
-            empirical_trace = 1 # average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
+            empirical_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
             population_trace = 0
             trace =  empirical_trace - population_trace
             hessian_traces.append(float(trace))
@@ -416,7 +439,7 @@ def main():
     np.random.seed(seed)
 
     runmodel = RunModel(args).to(device)
-    logging.info(f'Model: {args.arch}   Dataset: {args.dataset}  lr: {args.learning_rate}   batch size: {args.batch_size} '
+    logging.info(f'Model: {args.arch}   Dataset: {args.dataset}  lr: {args.learning_rate}   batch size: {args.batch_size}   gradient cliiping: {args.gradient_clipping}  '
                 f' Corrupt level: {args.label_corrupt_prob}  width: {args.width}' 
                 f' Trajectory samples: {args.k}  Seed: {seed} Traectory Term Reweight: {args.traj_reweight} '
                 f' Loss Bound (training): {args.train_loss_upperbound}  Loss Bound (evaluation): {args.loss_upperbound} '

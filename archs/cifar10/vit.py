@@ -186,17 +186,17 @@ class MyVisionTransformer(torchvision.models.VisionTransformer):
                 setattr(m, 'self_attention', MyMHA(hidden_dim, num_heads, dropout=attention_dropout, batch_first=True))
 
 def vit_small(width=1.0, dropout=0.0):
-    hidden_dim = int(128 * width)
+    hidden_dim = int(192 * width)
     mlp_expansion = 2.0
     return MyVisionTransformer(
         image_size=32,
         patch_size=4,
-        num_layers=6,
-        num_heads=4,
+        num_layers=9,
+        num_heads=12,
         hidden_dim=hidden_dim,
         mlp_dim=int(mlp_expansion * hidden_dim),
         dropout=dropout,
-        attention_dropout=dropout,
+        attention_dropout=0,
         num_classes=10
     )
 

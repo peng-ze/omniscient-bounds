@@ -26,7 +26,7 @@ parser.add_argument('--bound-epoch', type=int, default=29)
 parser.add_argument('--learning-rate', type=float, default=0.01)
 parser.add_argument('--momentum', type=float, default=0.9)
 parser.add_argument('--weight-decay', type=float, default=0)
-parser.add_argument('--width', type=int, default=None)
+parser.add_argument('--width', type=float, default=None)
 parser.add_argument('--test-freq', type=int, default=1)
 
 parser.add_argument('--ad_lr', type=bool, default=False,
@@ -63,6 +63,8 @@ parser.add_argument("--dropout", type=float, default=0.0)
 parser.add_argument("--warmup-epochs", type=int, default=None)
 parser.add_argument("--optimizer", type=str, default="SGD", choices=["SGD", "AdamW"])
 parser.add_argument("--scheduler", type=str, default=None, choices=[None, "cosine"])
+parser.add_argument("--gradient-clipping", action="store_true")
+parser.add_argument("--amp", action="store_true", help="Automatic Mixed Precision.")
 
 
 def format_experiment_name(args):
@@ -75,7 +77,10 @@ def format_experiment_name(args):
 
     name += args.arch
     name += '_lr{0}_bs{1}'.format(args.learning_rate, args.batch_size)
-    name += f'_width{args.width}'
+    width = args.width
+    if args.arch == 'resnet':
+        width = int(width)
+    name += f'_width{width}'
     if args.weight_decay > 0:
         name += '_Wd{0}'.format(args.weight_decay)
     else:
@@ -103,5 +108,6 @@ def parse_args():
         args.width = args.width if args.width is not None else 1.0
     else:
         raise NotImplemented(args.arch)
+    args.amp = True
     args.exp_name = format_experiment_name(args)
     return args
