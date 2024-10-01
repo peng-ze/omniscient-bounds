@@ -5,12 +5,10 @@ import torch.utils
 import torch.utils.data
 from torch.utils.data.dataloader import _BaseDataLoaderIter, _collate_fn_t, _worker_init_fn_t
 
-class ParallelModel(nn.Module):
+class ParallelModel(nn.ModuleList):
     def __init__(self, make_model, k) -> None:
-        super().__init__()
-        self.models = nn.ModuleList([
-            make_model() for _ in range(k)
-        ])
+        self.models = [make_model() for _ in range(k)]
+        super().__init__(self.models)
         self.copy_parameters()
 
     @torch.no_grad()
@@ -19,11 +17,11 @@ class ParallelModel(nn.Module):
             for (p0, p) in zip(self.models[0].parameters(), m.parameters()):
                 p.copy_(p0)
 
-    def __len__(self):
-        return len(self.models)
+    # def __len__(self):
+        # return len(self.models)
 
-    def __iter__(self):
-        return iter(self.models)
+    # def __iter__(self):
+        # return iter(self.models)
 
     def forward(self, xs):
         if not isinstance(xs, list):

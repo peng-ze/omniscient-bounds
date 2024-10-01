@@ -78,8 +78,8 @@ def format_experiment_name(args):
     name += args.arch
     name += '_lr{0}_bs{1}'.format(args.learning_rate, args.batch_size)
     width = args.width
-    if args.arch == 'resnet':
-        width = int(width)
+    if args.arch == 'resnet' and (width == 1.0 or width == 64):
+        width = 64 
     name += f'_width{width}'
     if args.weight_decay > 0:
         name += '_Wd{0}'.format(args.weight_decay)
