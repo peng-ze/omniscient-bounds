@@ -61,10 +61,13 @@ func handleConnection(conn net.Conn, ch chan CommandData, makeWorker worker_make
     }
     strAddWorker := "AddWorker"
     if strings.Contains(data.Command, strAddWorker) {
-        gpu_id := strings.TrimSpace(data.Command[len(strAddWorker):])
-        append_id = append_id - 1
-        fmt.Println("Adding new worker", append_id, "at GPU", gpu_id)
-        makeWorker(gpu_id, append_id)
+        splitCommand := strings.Split(data.Command, " ")
+        if len(splitCommand) > 1 {
+            gpu_id := strings.TrimSpace(splitCommand[1])
+            append_id = append_id - 1
+            fmt.Println("Adding new worker", append_id, "at GPU", gpu_id)
+            makeWorker(gpu_id, append_id)
+        }
     } else {
 	    ch <- data
     }

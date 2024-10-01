@@ -54,13 +54,13 @@ class RunModel(nn.Module):
         self.val_criterion = ParallelLoss(ClippedCrossEntropyLoss(clip=self.loss_clip), reduction='mean')
         if args.optimizer.lower() == 'sgd':
             self.optimizer = torch.optim.SGD(
-                self.model.parameters(), args.learning_rate,
+                self.model.parameters(), torch.tensor(args.learning_rate), # !!! wrap lr in tensor so to avoid recompilation, see https://pytorch.org/tutorials/recipes/compiling_optimizer_lr_scheduler.html
                 momentum=args.momentum,
                 weight_decay=args.weight_decay
             )
         elif args.optimizer.lower() == 'adamw':
             self.optimizer = torch.optim.AdamW(
-                self.model.parameters(), args.learning_rate,
+                self.model.parameters(), torch.tensor(args.learning_rate),
                 weight_decay=args.weight_decay
             )
 
@@ -246,6 +246,7 @@ class RunModel(nn.Module):
         for m in model:
             torch.nn.utils.clip_grad_norm_(m.parameters(), 1.0)
 
+    @torch.compile
     def train_batch(self, imgs, targets, idx, args):
         self.model.train()
 
