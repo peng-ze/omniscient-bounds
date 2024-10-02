@@ -66,7 +66,7 @@ class RunModel(nn.Module):
 
         if args.scheduler is not None:
             if args.scheduler.lower() == 'cosine':
-                self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.args.epochs-self.args.warmup_epochs, eta_min=1e-5, verbose=True)
+                self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.args.epochs-self.args.warmup_epochs, eta_min=args.learning_rate/10, verbose=True)
             else:
                 raise NotImplemented()
         else:
@@ -89,7 +89,6 @@ class RunModel(nn.Module):
             GradientDispersionBound(), 
             TerminalDispersionBound(clip=self.loss_clip, flatness=False), 
             # TerminalDispersionBound(clip=self.loss_clip),
-            TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, tolerance=self.args.tolerance),
             # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
             # TerminalDispersionBound(clip=self.loss_clip, unbiased=True, trajectories_for_opt=args.trajectories_for_optimization)
         ] + [
@@ -213,10 +212,16 @@ class RunModel(nn.Module):
                 ts_losses.append(ts_loss)
                 ts_acces.append(test_acc)
 
+
                 logging.info('%03d: L-tr: %.4f  L-ts: %.4f  gap: %.4f | Acc-train: %.2f Acc-test: %.2f Error-test: %.2f '
                             '| ' + '  '.join([f'{bound.name}.traj: {bound.trajectory_term(self.model):.3e}' for bound in self.bounds]) + ' | Time: %2.1f s ',
                             self.epoch, tr_loss, ts_loss, ts_loss - tr_loss, train_acc, test_acc, 100-test_acc,
                             (time.time() - t))
+
+                if (self.epoch >= 190 and train_acc < 70):
+                    logging.info("Hopless. Exiting...")
+                    exit(1)
+
             if self.should_compute_bound(self.epoch):
                 self.log_bound(self.epoch)
 
@@ -229,6 +234,7 @@ class RunModel(nn.Module):
         
         return tr_losses, tr_acces, ts_losses, ts_acces
 
+    @torch.compile
     def train_epoch(self, args, train_loader):
         self.model.train()
         for batch_idx, data in enumerate(tqdm(train_loader, f"Epoch {self.epoch}")):
@@ -246,7 +252,6 @@ class RunModel(nn.Module):
         for m in model:
             torch.nn.utils.clip_grad_norm_(m.parameters(), 1.0)
 
-    @torch.compile
     def train_batch(self, imgs, targets, idx, args):
         self.model.train()
 
