@@ -3,6 +3,7 @@
         "**/__pycache__/**": true,
         "**/data/**": true,
         "**/runs/**": true,
+        "**/logs/**": true,
         "**/GMP/**": true
     }
 }
