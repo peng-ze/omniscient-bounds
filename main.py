@@ -234,7 +234,6 @@ class RunModel(nn.Module):
         
         return tr_losses, tr_acces, ts_losses, ts_acces
 
-    @torch.compile
     def train_epoch(self, args, train_loader):
         self.model.train()
         for batch_idx, data in enumerate(tqdm(train_loader, f"Epoch {self.epoch}")):
@@ -252,6 +251,7 @@ class RunModel(nn.Module):
         for m in model:
             torch.nn.utils.clip_grad_norm_(m.parameters(), 1.0)
 
+    @torch.compile
     def train_batch(self, imgs, targets, idx, args):
         self.model.train()
 
