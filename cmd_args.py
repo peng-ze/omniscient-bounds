@@ -47,6 +47,7 @@ parser.add_argument("--print-freq", default=1, type=int)
 parser.add_argument("--valid-freq", default=1, type=int)
 parser.add_argument("--resume", type=str, default=None)
 parser.add_argument("--traj-reweight", type=float, nargs='+', default=[], help="Lambda(s) in Theorem 2 of the paper. The larger this value is, the more efforts will be put on decreasing the trajectory term. Enlarging this value too much will increase the penalty term.")
+parser.add_argument("--minimal-reweight", action='store_true')
 
 parser.add_argument('--name', default='', help='Experiment name.')
 
@@ -108,6 +109,9 @@ def parse_args():
         args.width = args.width if args.width is not None else 1.0
     else:
         raise NotImplemented(args.arch)
+    if not args.minimal_reweight:
+        args.traj_reweight.insert(0, 1)
+
     args.amp = True
     args.exp_name = format_experiment_name(args)
     return args
