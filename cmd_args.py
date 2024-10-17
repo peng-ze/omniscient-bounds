@@ -67,6 +67,11 @@ parser.add_argument("--scheduler", type=str, default=None, choices=[None, "cosin
 parser.add_argument("--gradient-clipping", action="store_true")
 parser.add_argument("--amp", action="store_true", help="Automatic Mixed Precision.")
 
+default_optimizer = {
+    'fc1': 'SGD',
+    'resnet': 'SGD',
+    'vit': 'AdamW'
+}
 
 def format_experiment_name(args):
     name = args.name
@@ -87,7 +92,8 @@ def format_experiment_name(args):
     else:
         name += '_NoWd'
 
-    # name += f'_seed{args.seed}'
+    if args.optimizer.lower() != default_optimizer[args.arch].lower():
+        name += '_' + args.optimizer
 
     return name
 

@@ -99,6 +99,7 @@ class RunModel(nn.Module):
         self.scaler = torch.cuda.amp.GradScaler() if self.args.amp else None
 
     def get_data_model(self, args, shuffle_train=True):
+        basic_transform = MyDataset.transform if args.dataset == 'cifar10' else MyDataset.mnist_transform
         if args.dataset == "mnist":
             from archs.mnist import AlexNet, LeNet5, fc1, vgg, resnet
         if args.dataset == "cifar10":
@@ -106,7 +107,7 @@ class RunModel(nn.Module):
 
         if 'cifar' in args.dataset:
             if args.arch == 'vit':
-                train_transform, test_transform = vit.vit_transform()
+                train_transform, test_transform, basic_transform = vit.vit_transform()
             else:
                 train_transform = transforms.Compose([
                     transforms.RandomHorizontalFlip(),
@@ -121,17 +122,17 @@ class RunModel(nn.Module):
         assert test_transform is None
 
         plain_data = make_parallel_datasets(InMemoryDataset(MyDataset(args, _train=True, no_transform=True)), args.k)
-        self.unaugmented_train_dataset = [AugmentationDataset(d, transform=MyDataset.transform if args.dataset == 'cifar10' else MyDataset.mnist_transform) for d in plain_data] 
+        self.unaugmented_train_dataset = [AugmentationDataset(d, transform=basic_transform) for d in plain_data] 
         self.traindataset = [AugmentationDataset(d, transform=train_transform) for d in plain_data]
 
         train_test_dataset = self.unaugmented_train_dataset 
 
-        valdataset, testdataset = torch.utils.data.random_split(InMemoryDataset(MyDataset(args, _train=False)), [args.validation_usage, 1-args.validation_usage],)
+        valdataset, testdataset = torch.utils.data.random_split(AugmentationDataset(InMemoryDataset(MyDataset(args, _train=False, no_transform=True)), transform=basic_transform), [args.validation_usage, 1-args.validation_usage],)
 
-        train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=16, pin_memory=True, persistent_workers=True)
-        train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, num_workers=8, pin_memory=True, persistent_workers=True)
-        test_loader = DataLoader(subset(testdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
-        val_loader = DataLoader(subset(valdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
+        train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=8, pin_memory=True, persistent_workers=True)
+        train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, num_workers=4, pin_memory=True, persistent_workers=True)
+        test_loader = DataLoader(subset(testdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(subset(valdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
 
         def make_model():
             if args.arch == 'fc1':
@@ -234,12 +235,9 @@ class RunModel(nn.Module):
         
         return tr_losses, tr_acces, ts_losses, ts_acces
 
-    @torch.compile
     def train_epoch(self, args, train_loader):
         self.model.train()
-        for batch_idx, data in enumerate(tqdm(train_loader, f"Epoch {self.epoch}")):
-            inputs, labels, idx = data
-            self.train_batch(inputs, labels, idx, args)
+        self.train_epoch_loop(train_loader)
         
         if self.args.warmup_epochs is not None and self.epoch < self.args.warmup_epochs:
             if self.warmup_scheduler is not None:
@@ -252,7 +250,14 @@ class RunModel(nn.Module):
         for m in model:
             torch.nn.utils.clip_grad_norm_(m.parameters(), 1.0)
 
-    def train_batch(self, imgs, targets, idx, args):
+    @torch.compile 
+    def train_epoch_loop(self, train_loader):
+        for batch_idx, data in enumerate(tqdm(train_loader, f"Epoch {self.epoch}")):
+            inputs, labels, idx = data
+            self.train_batch(inputs, labels)
+
+
+    def train_batch(self, imgs, targets):
         self.model.train()
 
         self.model.zero_grad(True)

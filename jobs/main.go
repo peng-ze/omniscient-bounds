@@ -48,10 +48,11 @@ func socketListener(socketPath string, ch chan CommandData, makeWorker worker_ma
     }
 }
 
+var append_id = 0
+
 
 func handleConnection(conn net.Conn, ch chan CommandData, makeWorker worker_maker) {
     defer conn.Close()
-    append_id := 0
 
     var data CommandData
     decoder := json.NewDecoder(conn)

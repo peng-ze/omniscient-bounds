@@ -189,8 +189,8 @@ def vit_small(width=1.0, dropout=0.0):
     hidden_dim = int(192 * width)
     mlp_expansion = 2.0
     return MyVisionTransformer(
-        image_size=32,
-        patch_size=4,
+        image_size=224, # if patch is too small, then patch embedding matrix will be too slim, making the training hard
+        patch_size=28,
         num_layers=9,
         num_heads=12,
         hidden_dim=hidden_dim,
@@ -205,10 +205,15 @@ def vit_transform():
     train_transform = transforms.Compose([
         transforms.RandAugment(),
         transforms.RandomHorizontalFlip(),
+        transforms.Resize(224),
+        MyDataset.transform
+    ])
+    basic_transform = transforms.Compose([
+        transforms.Resize(224),
         MyDataset.transform
     ])
     test_transform = None 
 
-    return train_transform, test_transform
+    return train_transform, test_transform, basic_transform
 
 

@@ -287,3 +287,6 @@ def ClippedCrossEntropyLoss(
 def clean_cache():
     gc.collect()
     torch.cuda.empty_cache()
+
+
+from torch.optim.lr_scheduler import CosineAnnealingLR
