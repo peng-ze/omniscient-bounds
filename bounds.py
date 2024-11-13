@@ -45,7 +45,7 @@ class Bound(nn.Module):
     def compute(self, parallel_model: ParallelModel, *args, **kwargs):
         pass
     
-    def forget(self, C: float, parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val_data_loader: DataLoader, test_data_loader: DataLoader):
+    def forget(self, C: float, parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val_data_loader: DataLoader, val2_data_loader: DataLoader):
         return float(self.trajectory_term(parallel_model)), 0, None, {}
 
 class GradientDispersionBound(Bound):
@@ -189,7 +189,7 @@ class TerminalDispersionBound(Bound):
             parallel_model,
             [[
                 (SelectedDataFieldDataLoader(parallel_training_data_loader.loaders[i], data_field=[0, 1]), 1), 
-               # (selected_testing_loader, -1), 
+               # (selected_ing_loader, -1), 
                 2 * C[i] * self.traj_reweight 
             ] for i in range(len(parallel_model))],
             [[
@@ -243,14 +243,14 @@ class TerminalDispersionBound(Bound):
 
 
 
-    def punishment(self, Delta: 'list[list[Tensor]]', parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, test_data_loader: DataLoader):
+    def punishment(self, Delta: 'list[list[Tensor]]', parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val2_data_loader: DataLoader):
         clean_cache()
         torch.cuda.synchronize()
         hessian_traces = []
         delta_losses = []
         for delta, model, empirical_loader in zip(tqdm(Delta, f"punishing ({self.traj_reweight})"), parallel_model.models, parallel_training_data_loader.loaders):
             empirical_delta_loss, hessian_trace = self.gamma(delta, model, empirical_loader)
-            population_delta_loss,  population_hessian_trace = self.gamma(delta, model, test_data_loader, True)
+            population_delta_loss,  population_hessian_trace = self.gamma(delta, model, val2_data_loader, True)
             # population_hessian_trace = 0
             hessian_traces.append((hessian_trace - population_hessian_trace).abs())
             delta_losses.append((empirical_delta_loss - population_delta_loss).abs())
@@ -296,7 +296,7 @@ class TerminalDispersionBound(Bound):
 
 
 
-    def forget(self, C: float, parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val_data_loader: DataLoader, test_data_loader: DataLoader):
+    def forget(self, C: float, parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val_data_loader: DataLoader, val2_data_loader: DataLoader):
         if not self.flatness:
             return self.trajectory_term(parallel_model), 0, None, {}
         nu = self.get_nu(parallel_model)
@@ -305,7 +305,7 @@ class TerminalDispersionBound(Bound):
 
         with torch.no_grad():
             tensor_delta = torch.stack([torch.cat([p.flatten() for p in m]) for m in Delta], dim=0)
-        return float(self.trajectory_term(parallel_model, tensor_delta)), *self.punishment(Delta, parallel_model, parallel_training_data_loader, test_data_loader), {
+        return float(self.trajectory_term(parallel_model, tensor_delta)), *self.punishment(Delta, parallel_model, parallel_training_data_loader, val2_data_loader), {
             'delta_norm': tensor_delta.norm(dim=-1).mean().item()
         }
 

@@ -45,7 +45,7 @@ class RunModel(nn.Module):
         self.args = args
         import math
         self.traindataset = None
-        self.train_loader, self.train_test_loader, self.val_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
+        self.train_loader, self.train_test_loader, self.val_loader, self.val2_loader, self.test_loader, self.model = self.get_data_model(args, shuffle_train=True)
         self.loss_clip = math.log(args.num_classes) * args.loss_upperbound
         self.train_loss_clip = (math.log(args.num_classes) * args.train_loss_upperbound) if args.train_loss_upperbound is not None else None
 
@@ -127,12 +127,14 @@ class RunModel(nn.Module):
 
         train_test_dataset = self.unaugmented_train_dataset 
 
-        valdataset, testdataset = torch.utils.data.random_split(AugmentationDataset(InMemoryDataset(MyDataset(args, _train=False, no_transform=True)), transform=basic_transform), [args.validation_usage, 1-args.validation_usage],)
+        valdataset, val2dataset, testdataset = torch.utils.data.random_split(AugmentationDataset(InMemoryDataset(MyDataset(args, _train=False, no_transform=True)), transform=basic_transform), [args.validation_usage, args.validation_usage, 1 - 2 * args.validation_usage],)
 
         train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=8, pin_memory=True, persistent_workers=True)
         train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, num_workers=4, pin_memory=True, persistent_workers=True)
         test_loader = DataLoader(subset(testdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
         val_loader = DataLoader(subset(valdataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+        val2_loader = DataLoader(subset(val2dataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+
 
         def make_model():
             if args.arch == 'fc1':
@@ -176,7 +178,7 @@ class RunModel(nn.Module):
         model = ParallelModel(make_model, k=args.k).to(device)
         self.n_sample = len(self.unaugmented_train_dataset[0])
 
-        return train_loader, train_test_loader, val_loader, test_loader, model
+        return train_loader, train_test_loader, val_loader, val2_loader, test_loader, model
     
     def should_compute_bound(self, epoch):
 
@@ -326,7 +328,7 @@ class RunModel(nn.Module):
         hessian_traces: list[float] = []
         for (model, loader) in zip(self.model.models, train_loader.loaders): 
             empirical_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
-            population_trace = 0
+            population_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(self.val2_loader, [0,1]))
             trace =  empirical_trace - population_trace
             hessian_traces.append(float(trace))
         return hessian_traces 
@@ -348,7 +350,7 @@ class RunModel(nn.Module):
             res['hessian_term_prior'] = float(self.n_iter * hessian_term)
             print(res['hessian_term_prior'])
             C = [3/2 * (std_proxy**2 / self.n_sample * h).abs()**(1/3) for h in hessian_traces]
-            trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_test_loader, self.val_loader, self.test_loader)
+            trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_test_loader, self.val_loader, self.val2_loader)
             if new_hessian_trace is not None:
                 hessian_term = new_hessian_trace / 2
             A = (std_proxy**2 / self.n_sample * trajectory_term).sqrt()
@@ -458,40 +460,6 @@ def main():
     logging.info('Number of parameters: %d', sum([p.data.nelement() for p in runmodel.model.parameters()]) // args.k)
 
     tr_losses, tr_acces, ts_losses, ts_acces = runmodel.train_model(args)
-
-    # plt.title('Loss')
-    # plt.plot(np.arange(len(tr_losses)), tr_losses, color='green', linewidth=2.0, linestyle='-', label='Train')
-    # plt.plot(np.arange(len(ts_losses)), ts_losses, color='blue', linewidth=2.0, linestyle='-', label='Test')
-    # plt.legend(loc='best')
-    # plt.savefig(f"{os.getcwd()}/plots/Bound/Loss_{args.dataset}{args.label_corrupt_prob}_"
-                # f"{args.arch}_{args.batch_size}_{args.learning_rate}.png", dpi=1200)
-    # plt.close()
-    # plt.figure()
-    # plt.plot(np.arange(len(tr_acces)), tr_acces, color='green', linewidth=3.0, linestyle='-', label='Train')
-    # plt.plot(np.arange(len(ts_acces)), ts_acces, color='blue', linewidth=3.0, linestyle='-', label='Test')
-    # plt.title('Acc')
-    # plt.legend(loc='best')
-    # plt.savefig(f"{os.getcwd()}/plots/Bound/Acc_{args.dataset}{args.label_corrupt_prob}"
-                # f"_{args.arch}_{args.batch_size}_{args.learning_rate}.png", dpi=1200)
-    # plt.close()
-
-    # plt.figure()
-    # plt.plot(np.arange(len(runmodel.gradient_norm)), runmodel.gradient_norm, color='green', linewidth=3.0,
-             # linestyle='-', label='Grad_Norm')
-    # plt.title('Gradient Norm')
-    # plt.legend(loc='best')
-    # plt.savefig(f"{os.getcwd()}/plots/Bound/GradNorm_{args.dataset}{args.label_corrupt_prob}"
-                # f"_{args.arch}_{args.batch_size}_{args.learning_rate}.png", dpi=1200)
-    # plt.close()
-    # plt.figure()
-    # plt.plot(np.arange(len(runmodel.gradient_variance)), runmodel.gradient_variance, color='red', linewidth=3.0,
-             # linestyle='-', label='Grad_Var')
-    # plt.title('Gradient Variance')
-    # plt.legend(loc='best')
-    # plt.savefig(f"{os.getcwd()}/plots/Bound/GradVar_{args.dataset}{args.label_corrupt_prob}"
-                # f"_{args.arch}_{args.batch_size}_{args.learning_rate}.png", dpi=1200)
-    # plt.close()
-            
 
 if __name__ == '__main__':
     main()
