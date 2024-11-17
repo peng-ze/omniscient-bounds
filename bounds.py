@@ -103,7 +103,23 @@ class GradientDispersionBound(Bound):
     def trajectory_term(self, parallel_model: ParallelModel, *args, **kwargs):
         return float(self.gradient_dispersion)
     
+class BackupModelParams:
+    def __init__(self, model: nn.Module):
+        self.model = model
+        self.backup = None
 
+    @torch.no_grad()
+    def __enter__(self):
+        torch.cuda.synchronize()
+        self.backup = [p.data.clone().detach() for p in self.model.parameters()]
+        torch.cuda.synchronize()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        torch.cuda.synchronize()
+        for p, backup_p in zip(self.model.parameters(), self.backup):
+            p.data.copy_(backup_p)
+        torch.cuda.synchronize()
 
 class TerminalDispersionBound(Bound):
     def __init__(self, clip=None, flatness=True, cross_dispersion=False, full_utilization=False, traj_reweight=1.0, tolerance=1e-2) -> None:
@@ -176,7 +192,7 @@ class TerminalDispersionBound(Bound):
     def surrogate_forget(self, C: Tensor, nu: 'list[list[Tensor]]', parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val_dataloader: DataLoader):
 
 
-        selected_validation_loader = SelectedDataFieldDataLoader(val_dataloader, [0, 1])
+        # selected_validation_loader = SelectedDataFieldDataLoader(val_dataloader, [0, 1])
 
         grad_empirical = self.gradients(parallel_model, parallel_training_data_loader)
         grad_population = self.gradients(parallel_model, val_dataloader) 
@@ -221,24 +237,21 @@ class TerminalDispersionBound(Bound):
 
 
     def gamma(self, delta: 'list[Tensor]', model: nn.Module, loader: DataLoader, trace=True):
+        torch.cuda.synchronize()
         loss0 = self.loss(model, loader)
         torch.cuda.synchronize()
-        with torch.no_grad():
-            for (d, p) in zip(delta, model.parameters()):
-                p.data += d
-        torch.cuda.synchronize()
-        loss_delta = self.loss(model, loader)
-        if trace:
-            hessian_traces = average_hessian_trace(self.clip, model, SelectedDataFieldDataLoader(loader, [0, 1]))
-            hessian_trace = torch.tensor(hessian_traces).mean().to(device=next(model.parameters()).device)
-            model.zero_grad(True)
-        else:
-            hessian_trace = None
-        torch.cuda.synchronize()
-        with torch.no_grad():
-            for (d, p) in zip(delta, model.parameters()):
-                p.data -= d
-        torch.cuda.synchronize()
+        with BackupModelParams(model):
+            with torch.no_grad():
+                for (d, p) in zip(delta, model.parameters()):
+                    p.data += d
+            torch.cuda.synchronize()
+            loss_delta = self.loss(model, loader)
+            if trace:
+                hessian_traces = average_hessian_trace(self.clip, model, SelectedDataFieldDataLoader(loader, [0, 1]))
+                hessian_trace = torch.tensor(hessian_traces).mean().to(device=next(model.parameters()).device)
+                model.zero_grad(True)
+            else:
+                hessian_trace = None
         return loss_delta - loss0, hessian_trace
 
 
