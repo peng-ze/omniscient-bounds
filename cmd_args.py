@@ -56,9 +56,10 @@ parser.add_argument("--loss-upperbound", type=float, default=12.0, help="The sca
 parser.add_argument("--train-loss-upperbound", type=float, default=None, help="The scaling factor in the upperbound of Clipped Cross Entropy Loss in training. Setting this value to u will set the upperbound to u * log C, where C is the number of classes.")
 parser.add_argument("--bound-freq", type=int, default=None, help="The frequency of bound estimation. Defaults to `None`, which means only estimate the bound at the end of the whole training.")
 parser.add_argument("--data-usage-for-bounds", type=float, default=1.0, help="The portion of data used when estimating the bounds. This can reduce the the time of bound estimation.")
-parser.add_argument("--tolerance", type=float, default=1e-2, help="(Relative) tolerance when inverting Hessians.")
+parser.add_argument("--tolerance", type=float, default=1e-4, help="(Relative) tolerance when inverting Hessians.")
 parser.add_argument("--validation-usage", type=float, default=0.33, help="The portion of validation data, split from the testing set, that is used for optimizing the bound.")
 parser.add_argument("--dont-repeat", action='store_true', help="Skip experiments if there have been records with the same hyperparameter and longer epochs (they may have different random seeds).")
+parser.add_argument("--train-to-val", type=float, default=0.0, help="Portion of training data transferred to validation set.")
 
 parser.add_argument("--dropout", type=float, default=0.0)
 parser.add_argument("--warmup-epochs", type=int, default=None)

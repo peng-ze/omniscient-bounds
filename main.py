@@ -7,8 +7,6 @@ from torch import Tensor
 import torch.amp
 import torch.nn as nn
 import torch.utils
-import torch.utils
-import torch.utils
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torch.nn.functional as F
@@ -121,13 +119,15 @@ class RunModel(nn.Module):
 
         assert test_transform is None
 
-        plain_data = make_parallel_datasets(InMemoryDataset(MyDataset(args, _train=True, no_transform=True)), args.k)
+        train_to_train, train_to_val = torch.utils.data.random_split(MyDataset(args, _train=True, no_transform=True), [1 - args.train_to_val, args.train_to_val])        
+
+        plain_data = make_parallel_datasets(InMemoryDataset(train_to_train), args.k)
         self.unaugmented_train_dataset = [AugmentationDataset(d, transform=basic_transform) for d in plain_data] 
         self.traindataset = [AugmentationDataset(d, transform=train_transform) for d in plain_data]
 
         train_test_dataset = self.unaugmented_train_dataset 
 
-        valdataset, val2dataset, testdataset = torch.utils.data.random_split(AugmentationDataset(InMemoryDataset(MyDataset(args, _train=False, no_transform=True)), transform=basic_transform), [args.validation_usage, args.validation_usage, 1 - 2 * args.validation_usage],)
+        valdataset, val2dataset, testdataset = torch.utils.data.random_split(AugmentationDataset(InMemoryDataset(UnionDataset(MyDataset(args, _train=False, no_transform=True), train_to_val)), transform=basic_transform), [args.validation_usage, args.validation_usage, 1 - 2 * args.validation_usage],)
 
         train_loader = ParallelDataloader(self.traindataset, batch_size=args.batch_size, shuffle=shuffle_train, num_workers=8, pin_memory=True, persistent_workers=True)
         train_test_loader = ParallelDataloader(subset(train_test_dataset, args.data_usage_for_bounds), batch_size=args.batch_size_for_validation, num_workers=4, pin_memory=True, persistent_workers=True)
@@ -252,7 +252,7 @@ class RunModel(nn.Module):
         for m in model:
             torch.nn.utils.clip_grad_norm_(m.parameters(), 1.0)
 
-    @torch.compile 
+    # @torch.compile 
     def train_epoch_loop(self, train_loader):
         for batch_idx, data in enumerate(tqdm(train_loader, f"Epoch {self.epoch}")):
             inputs, labels, idx = data

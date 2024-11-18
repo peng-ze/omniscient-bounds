@@ -290,3 +290,18 @@ def clean_cache():
 
 
 from torch.optim.lr_scheduler import CosineAnnealingLR
+
+class UnionDataset(Dataset):
+    def __init__(self, *datasets):
+        super().__init__()
+        self.datasets = datasets
+
+    def __len__(self):
+        return sum(len(d) for d in self.datasets)
+
+    def __getitem__(self, index):
+        for d in self.datasets:
+            if index < len(d):
+                return d[index]
+            index -= len(d)
+        raise IndexError("Index out of range")
