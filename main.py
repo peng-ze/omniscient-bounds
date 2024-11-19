@@ -326,22 +326,27 @@ class RunModel(nn.Module):
         self.model.eval()
 
         hessian_traces: list[float] = []
+        empirical_hessian_traces: list[float] = []
         for (model, loader) in zip(self.model.models, train_loader.loaders): 
+            clean_cache()
             empirical_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
             population_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(self.val2_loader, [0,1]))
             trace =  empirical_trace - population_trace
             hessian_traces.append(float(trace))
-        return hessian_traces 
+            empirical_hessian_traces.append(float(empirical_trace))
+            clean_cache()
+        return hessian_traces, empirical_hessian_traces
 
     def compute_bound(self, args):
         self.model.eval()
+        clean_cache()
         if args.proxy:
             std_fit = self.fit_subGaussian()
             std_proxy = std_fit
         else:
             device = next(self.model.parameters()).device
             std_proxy = torch.tensor([self.loss_clip / 2], device=device) 
-        hessian_traces = self.compute_hessian(args)
+        hessian_traces, empirical_hessian_traces = self.compute_hessian(args)
         results = []
         for bound in self.bounds:
             hessian_term = 1 / 2 * sum(hessian_traces) / len(hessian_traces)
@@ -349,7 +354,7 @@ class RunModel(nn.Module):
             res['name'] = bound.name
             res['hessian_term_prior'] = float(self.n_iter * hessian_term)
             print(res['hessian_term_prior'])
-            C = [3/2 * (std_proxy**2 / self.n_sample * h).abs()**(1/3) for h in hessian_traces]
+            C = [3/2 * (std_proxy**2 / self.n_sample * h).abs()**(1/3) for h in empirical_hessian_traces]
             trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_test_loader, self.val_loader, self.val2_loader)
             if new_hessian_trace is not None:
                 hessian_term = new_hessian_trace / 2

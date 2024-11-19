@@ -193,6 +193,7 @@ class TerminalDispersionBound(Bound):
 
 
         # selected_validation_loader = SelectedDataFieldDataLoader(val_dataloader, [0, 1])
+        clean_cache()
 
         grad_empirical = self.gradients(parallel_model, parallel_training_data_loader)
         grad_population = self.gradients(parallel_model, val_dataloader) 
