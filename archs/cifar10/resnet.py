@@ -7,6 +7,7 @@ Reference:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from math import floor
 
 
 class BasicBlock(nn.Module):
@@ -63,9 +64,12 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10, width=1.0):
+    def __init__(self, block, standard_num_blocks, num_classes=10, width=1.0, depth=1.0):
         super(ResNet, self).__init__()
         self.width = width
+        num_blocks = self._compute_block_numbers(standard_num_blocks, depth=depth)
+
+        print("num_blocks", num_blocks)
 
         self.conv1 = nn.Conv2d(3, int(64 * width), kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(int(64 * width))
@@ -75,6 +79,21 @@ class ResNet(nn.Module):
         self.layer3 = self._make_layer(block, int(256 * width), num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block, int(512 * width), num_blocks[3], stride=2)
         self.linear = nn.Linear(int(512 * width)*block.expansion, num_classes)
+
+    def _compute_block_numbers(self, standard_num_blocks: list[int], depth=1.0):
+        if depth == 1.0:
+            return standard_num_blocks
+        num_blocks = [int(floor(depth * s)) for s in standard_num_blocks]
+        while True:
+            residuals = [depth * s - n for s, n in zip(standard_num_blocks, num_blocks)]
+            total_residuals = sum(residuals)
+            if total_residuals <= 0: 
+                break
+            most_demanding_stage = residuals.index(max(residuals))
+            num_blocks[most_demanding_stage] += 1
+        return num_blocks
+
+
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
@@ -96,10 +115,10 @@ class ResNet(nn.Module):
         return out
 
 
-def resnet18(width=1.0):
+def resnet18(width=1.0, depth=1.0):
     if width > 10:
         width = width / 64
-    return ResNet(BasicBlock, [2,2,2,2], width=width)
+    return ResNet(BasicBlock, [2,2,2,2], width=width, depth=depth)
 
 def ResNet34():
     return ResNet(BasicBlock, [3,4,6,3])

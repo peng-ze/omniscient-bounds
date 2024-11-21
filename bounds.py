@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from myhessian import iHVP, HVP, _inner_product
 from utils import ClippedCrossEntropyLoss, clean_cache
 from tqdm.auto import tqdm
+from utils import *
 import numpy as np
 def average_hessian_trace(clip, model, dataloader: DataLoader):
     trace_sum = 0
@@ -103,23 +104,6 @@ class GradientDispersionBound(Bound):
     def trajectory_term(self, parallel_model: ParallelModel, *args, **kwargs):
         return float(self.gradient_dispersion)
     
-class BackupModelParams:
-    def __init__(self, model: nn.Module):
-        self.model = model
-        self.backup = None
-
-    @torch.no_grad()
-    def __enter__(self):
-        torch.cuda.synchronize()
-        self.backup = [p.data.clone().detach() for p in self.model.parameters()]
-        torch.cuda.synchronize()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        torch.cuda.synchronize()
-        for p, backup_p in zip(self.model.parameters(), self.backup):
-            p.data.copy_(backup_p)
-        torch.cuda.synchronize()
 
 class TerminalDispersionBound(Bound):
     def __init__(self, clip=None, flatness=True, cross_dispersion=False, full_utilization=False, traj_reweight=1.0, tolerance=1e-2) -> None:
@@ -323,8 +307,3 @@ class TerminalDispersionBound(Bound):
             'delta_norm': tensor_delta.norm(dim=-1).mean().item()
         }
 
-
-
-
-
-        

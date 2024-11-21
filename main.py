@@ -121,6 +121,8 @@ class RunModel(nn.Module):
 
         train_to_train, train_to_val = torch.utils.data.random_split(MyDataset(args, _train=True, no_transform=True), [1 - args.train_to_val, args.train_to_val])        
 
+        train_to_train, _ = torch.utils.data.random_split(train_to_train, [args.training_data_usage, 1-args.training_data_usage])
+
         plain_data = make_parallel_datasets(InMemoryDataset(train_to_train), args.k)
         self.unaugmented_train_dataset = [AugmentationDataset(d, transform=basic_transform) for d in plain_data] 
         self.traindataset = [AugmentationDataset(d, transform=train_transform) for d in plain_data]
@@ -138,7 +140,7 @@ class RunModel(nn.Module):
 
         def make_model():
             if args.arch == 'fc1':
-                model = fc1.fc1(width=args.width)
+                model = fc1.fc1(width=args.width, depth=args.depth, bias=not (args.weight_scaling is not None and args.weight_scaling != 1.0)) # bias must be specially dealt with when weights are scaled
                 # Weight Initialization
                 if args.fixinit:
                     print("loading...")
@@ -166,7 +168,7 @@ class RunModel(nn.Module):
                 else:
                     model.apply(weight_init)
             if args.arch == 'resnet':
-                model = resnet.resnet18(width=args.width)
+                model = resnet.resnet18(width=args.width, depth=args.depth)
                 model.apply(weight_init)
             if args.arch == 'vgg':
                 model = vgg.vgg11()
@@ -302,24 +304,38 @@ class RunModel(nn.Module):
         self.model.zero_grad(True)
         self.optimizer.zero_grad(True)
 
-    def validate_test(self, val_loader, model, args):
+    @torch.no_grad()
+    def scale_weight(self, model: nn.Module):
+        print("scaling weights by", self.args.weight_scaling)
+        for p in model.parameters():
+            p.data.mul_(self.args.weight_scaling)
+
+
+    def to_eval(self, model: nn.Module):
         model.eval()
-        test_loss = AverageMeter()
-        accuracy = AverageMeter()
-        with torch.no_grad():
-            for data, target, _ in val_loader:
-                if isinstance(data, Tensor):
-                    data, target = data.to(device), target.to(device)
-                    n = len(data)
-                else:
-                    data = [d.to(device) for d in data]
-                    target = [t.to(device) for t in target]
-                    n = len(data[0])
-                output = model(data)
-                loss = self.val_criterion(output, target)
-                test_loss.update(loss.item(), n)
-                accuracy.update(self.accuracy(output, target).item(), n)
-        return test_loss.avg, accuracy.avg * 100
+        if self.args.weight_scaling is not None and self.args.weight_scaling != 1.0:
+            self.scale_weight(model)
+
+
+    def validate_test(self, val_loader, model, args):
+        with BackupModelParams(model):
+            self.to_eval(model)
+            test_loss = AverageMeter()
+            accuracy = AverageMeter()
+            with torch.no_grad():
+                for data, target, _ in val_loader:
+                    if isinstance(data, Tensor):
+                        data, target = data.to(device), target.to(device)
+                        n = len(data)
+                    else:
+                        data = [d.to(device) for d in data]
+                        target = [t.to(device) for t in target]
+                        n = len(data[0])
+                    output = model(data)
+                    loss = self.val_criterion(output, target)
+                    test_loss.update(loss.item(), n)
+                    accuracy.update(self.accuracy(output, target).item(), n)
+            return test_loss.avg, accuracy.avg * 100
 
     def compute_hessian(self, args):
         train_loader = ParallelDataloader(self.unaugmented_train_dataset, batch_size=args.batch_size_for_validation, shuffle=True)
@@ -338,45 +354,46 @@ class RunModel(nn.Module):
         return hessian_traces, empirical_hessian_traces
 
     def compute_bound(self, args):
-        self.model.eval()
-        clean_cache()
-        if args.proxy:
-            std_fit = self.fit_subGaussian()
-            std_proxy = std_fit
-        else:
-            device = next(self.model.parameters()).device
-            std_proxy = torch.tensor([self.loss_clip / 2], device=device) 
-        hessian_traces, empirical_hessian_traces = self.compute_hessian(args)
-        results = []
-        for bound in self.bounds:
-            hessian_term = 1 / 2 * sum(hessian_traces) / len(hessian_traces)
-            res = OrderedDict()
-            res['name'] = bound.name
-            res['hessian_term_prior'] = float(self.n_iter * hessian_term)
-            print(res['hessian_term_prior'])
-            C = [3/2 * (std_proxy**2 / self.n_sample * h).abs()**(1/3) for h in empirical_hessian_traces]
-            trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_test_loader, self.val_loader, self.val2_loader)
-            if new_hessian_trace is not None:
-                hessian_term = new_hessian_trace / 2
-            A = (std_proxy**2 / self.n_sample * trajectory_term).sqrt()
-            B = self.n_iter * abs(hessian_term)
-            best_sigma = (A / (2 * B))**(1/3)
-            bound_value = 3 * ((A/2)**(2/3)) * (B ** (1/3)) + punishment 
-            bound.computed_value = bound_value
+        with BackupModelParams(self.model):
+            self.to_eval(self.model)
+            clean_cache()
+            if args.proxy:
+                std_fit = self.fit_subGaussian()
+                std_proxy = std_fit
+            else:
+                device = next(self.model.parameters()).device
+                std_proxy = torch.tensor([self.loss_clip / 2], device=device) 
+            hessian_traces, empirical_hessian_traces = self.compute_hessian(args)
+            results = []
+            for bound in self.bounds:
+                hessian_term = 1 / 2 * sum(hessian_traces) / len(hessian_traces)
+                res = OrderedDict()
+                res['name'] = bound.name
+                res['hessian_term_prior'] = float(self.n_iter * hessian_term)
+                print(res['hessian_term_prior'])
+                C = [3/2 * (std_proxy**2 / self.n_sample * h).abs()**(1/3) for h in empirical_hessian_traces]
+                trajectory_term, punishment, new_hessian_trace, extra_info = bound.forget(C, self.model, self.train_test_loader, self.val_loader, self.val2_loader)
+                if new_hessian_trace is not None:
+                    hessian_term = new_hessian_trace / 2
+                A = (std_proxy**2 / self.n_sample * trajectory_term).sqrt()
+                B = self.n_iter * abs(hessian_term)
+                best_sigma = (A / (2 * B))**(1/3)
+                bound_value = 3 * ((A/2)**(2/3)) * (B ** (1/3)) + punishment 
+                bound.computed_value = bound_value
 
-            res['C'] = float(torch.tensor(C, device=A.device).mean())
-            res['trajectory_term_vanilla'] = float(A)
-            res['flatness_term_vanilla'] = float(B)
-            res['best_sigma'] = float(best_sigma)
-            res['trajectory_term'] = float(A / best_sigma)
-            res['flatness_term'] = float(best_sigma ** 2 * B)
+                res['C'] = float(torch.tensor(C, device=A.device).mean())
+                res['trajectory_term_vanilla'] = float(A)
+                res['flatness_term_vanilla'] = float(B)
+                res['best_sigma'] = float(best_sigma)
+                res['trajectory_term'] = float(A / best_sigma)
+                res['flatness_term'] = float(best_sigma ** 2 * B)
 
-            res['punishment'] = float(punishment)
-            for k, v in extra_info.items():
-                res[k] = v
-            res['bound'] = bound_value
-            results.append(res)
-        return results
+                res['punishment'] = float(punishment)
+                for k, v in extra_info.items():
+                    res[k] = v
+                res['bound'] = bound_value
+                results.append(res)
+            return results
 
     def fit_subGaussian(self):
         losses_all = torch.cat(self.losses_all).flatten()

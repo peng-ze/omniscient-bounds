@@ -3,13 +3,23 @@ import torch.nn as nn
 
 class fc1(nn.Module):
 
-    def __init__(self, num_classes=10, width=512):
+    def __init__(self, num_classes=10, width=512, depth=1.0, bias=True):
         super(fc1, self).__init__()
-        self.classifier = nn.Sequential(
-            nn.Linear(3*32*32, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, num_classes)
-        )
+        standard_depth = 2
+        depth = int(standard_depth * depth)
+        assert depth >= 1, (standard_depth, depth)
+        if depth == 1:
+            self.classifier = nn.Linear(3*32*32, num_classes, bias=bias)
+        else:
+            self.classifier = nn.Sequential(*([nn.Sequential(
+                nn.Linear(3*32*32, width, bias=bias), 
+                nn.ReLU()
+            )] + [nn.Sequential(
+                nn.Linear(width, width, bias=bias), 
+                nn.ReLU()
+            ) for _ in range(depth-2)] + [
+                nn.Linear(width, num_classes, bias=bias)
+            ]))
 
     def forward(self, x):
         x = torch.flatten(x, 1)

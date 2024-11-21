@@ -290,6 +290,7 @@ def clean_cache():
 
 
 from torch.optim.lr_scheduler import CosineAnnealingLR
+import inspect
 
 class UnionDataset(Dataset):
     def __init__(self, *datasets):
@@ -305,3 +306,22 @@ class UnionDataset(Dataset):
                 return d[index]
             index -= len(d)
         raise IndexError("Index out of range")
+
+class BackupModelParams:
+    def __init__(self, model: nn.Module):
+        self.model = model
+        self.backup = None
+
+    @torch.no_grad()
+    def __enter__(self):
+        torch.cuda.synchronize()
+        self.backup = [p.data.clone().detach() for p in self.model.parameters()]
+        torch.cuda.synchronize()
+        return self
+
+    @torch.no_grad()
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        torch.cuda.synchronize()
+        for p, backup_p in zip(self.model.parameters(), self.backup):
+            p.data.copy_(backup_p)
+        torch.cuda.synchronize()

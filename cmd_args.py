@@ -67,6 +67,9 @@ parser.add_argument("--optimizer", type=str, default="SGD", choices=["SGD", "Ada
 parser.add_argument("--scheduler", type=str, default=None, choices=[None, "cosine"])
 parser.add_argument("--gradient-clipping", action="store_true")
 parser.add_argument("--amp", action="store_true", help="Automatic Mixed Precision.")
+parser.add_argument("--weight-scaling", type=float, default=None, help="Scaling factor for the weights at the end of training.")
+parser.add_argument("--depth", type=float, default=1.0)
+parser.add_argument("--training-data-usage", type=float, default=1.0, help="Portion of training data used for training.")
 
 default_optimizer = {
     'fc1': 'SGD',
@@ -95,6 +98,14 @@ def format_experiment_name(args):
 
     if args.optimizer.lower() != default_optimizer[args.arch].lower():
         name += '_' + args.optimizer
+
+    if args.weight_scaling is not None and args.weight_scaling != 1.0:
+        name += '_ws{0}'.format(args.weight_scaling)
+    
+    if args.depth is not None and args.depth != 1.0:
+        name += '_depth{0}'.format(args.depth)
+    if args.training_data_usage < 1.0:
+        name += '_train{0}'.format(args.training_data_usage)
 
     return name
 
