@@ -149,23 +149,28 @@ class TerminalDispersionBound(Bound):
         return float(term_disp / self.n_iter)
     
     def gradients(self, parallel_model: ParallelModel, data_loader: ParallelDataloader):
-        parallel_loss = ParallelLoss(loss_fn=ClippedCrossEntropyLoss(clip=self.clip)) 
+        parallel_loss = ParallelLoss(loss_fn=ClippedCrossEntropyLoss(clip=self.clip, reduction='sum')) 
         parallel_model.zero_grad(True)
         device = next(parallel_model.parameters()).device
+        count = [0 for _ in parallel_model]
         for data in data_loader:
             data = tuple(data)
             X = data[0]; Y = data[1]
             if isinstance(X, Tensor):
                 X, Y = X.to(device), Y.to(device)
+                lens_y = [len(Y) for _ in range(len(parallel_model))]
             else:
                 X = [x.to(device) for x in X]
                 Y = [y.to(device) for y in Y]
+                lens_y = [len(y) for y in Y]
+            
             output = parallel_model(X)
             loss = parallel_loss(output, Y)
+            count = [c + len_y for c, len_y in zip(count, lens_y)]
             loss.backward()
 
         res = [
-            [p.grad / len(data_loader) if p.grad is not None else torch.zeros_like(p) for p in m.parameters() ] for m in parallel_model.models
+            [p.grad / c if p.grad is not None else torch.zeros_like(p) for p in m.parameters() ] for c, m in zip(count, parallel_model.models)
         ]
 
         parallel_model.zero_grad(True)

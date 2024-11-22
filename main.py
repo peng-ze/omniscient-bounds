@@ -223,7 +223,7 @@ class RunModel(nn.Module):
                             self.epoch, tr_loss, ts_loss, ts_loss - tr_loss, train_acc, test_acc, 100-test_acc,
                             (time.time() - t))
 
-                if (self.epoch >= 190 and train_acc < 70):
+                if self.epoch >= 190 and (train_acc < 70 or (self.args.arch == 'resnet' and self.args.batch_size >= 240 and train_acc < 95)):
                     logging.info("Hopless. Exiting...")
                     exit(1)
 
