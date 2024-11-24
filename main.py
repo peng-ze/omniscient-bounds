@@ -89,9 +89,9 @@ class RunModel(nn.Module):
             # TerminalDispersionBound(clip=self.loss_clip),
             # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
             # TerminalDispersionBound(clip=self.loss_clip, unbiased=True, trajectories_for_opt=args.trajectories_for_optimization)
-        ] + [
+        ] + ([
                 TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, traj_reweight=w, tolerance=self.args.tolerance) for w in args.traj_reweight
-        ]
+        ] if not self.args.existing_bounds_only else [])
         )
 
         self.scaler = torch.cuda.amp.GradScaler() if self.args.amp else None
@@ -346,7 +346,10 @@ class RunModel(nn.Module):
         for (model, loader) in zip(self.model.models, train_loader.loaders): 
             clean_cache()
             empirical_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
-            population_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(self.val2_loader, [0,1]))
+            if not self.args.no_population_Hessian:
+                population_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(self.val2_loader, [0,1]))
+            else:
+                population_trace = 0
             trace =  empirical_trace - population_trace
             hessian_traces.append(float(trace))
             empirical_hessian_traces.append(float(empirical_trace))

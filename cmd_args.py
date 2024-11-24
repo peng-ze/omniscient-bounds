@@ -71,6 +71,9 @@ parser.add_argument("--weight-scaling", type=float, default=None, help="Scaling 
 parser.add_argument("--depth", type=float, default=1.0)
 parser.add_argument("--training-data-usage", type=float, default=1.0, help="Portion of training data used for training.")
 
+parser.add_argument("--no-population-Hessian", action="store_true", help="Do not use population Hessian when estimating existing bounds.")
+parser.add_argument("--existing-bounds-only", action="store_true", help="Only estimate existing bounds.")
+
 default_optimizer = {
     'fc1': 'SGD',
     'resnet': 'SGD',
