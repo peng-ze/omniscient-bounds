@@ -90,7 +90,7 @@ class RunModel(nn.Module):
             # TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True),
             # TerminalDispersionBound(clip=self.loss_clip, unbiased=True, trajectories_for_opt=args.trajectories_for_optimization)
         ] + ([
-                TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, traj_reweight=w, tolerance=self.args.tolerance) for w in args.traj_reweight
+                TerminalDispersionBound(clip=self.loss_clip, cross_dispersion=True, full_utilization=True, traj_reweight=w, tolerance=self.args.tolerance, self_certified_algorithm=self.args.self_certified_algorithm) for w in args.traj_reweight
         ] if not self.args.existing_bounds_only else [])
         )
 
@@ -346,7 +346,7 @@ class RunModel(nn.Module):
         for (model, loader) in zip(self.model.models, train_loader.loaders): 
             clean_cache()
             empirical_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(loader, [0,1]))
-            if not self.args.no_population_Hessian:
+            if not self.args.no_population_Hessian and not self.args.self_certified_algorithm:
                 population_trace = average_hessian_trace(self.loss_clip, model, SelectedDataFieldDataLoader(self.val2_loader, [0,1]))
             else:
                 population_trace = 0
@@ -481,8 +481,9 @@ def main():
     runmodel = RunModel(args).to(device)
     logging.info(f'Model: {args.arch}   Dataset: {args.dataset}  lr: {args.learning_rate}   batch size: {args.batch_size}   gradient cliiping: {args.gradient_clipping}  '
                 f' Corrupt level: {args.label_corrupt_prob}  width: {args.width}' 
-                f' Trajectory samples: {args.k}  Seed: {seed} Traectory Term Reweight: {args.traj_reweight} '
+                f' Trajectory samples: {args.k}  Seed: {seed} Trajectory Term Reweight: {args.traj_reweight} '
                 f' Loss Bound (training): {args.train_loss_upperbound}  Loss Bound (evaluation): {args.loss_upperbound} '
+                f' Self-certified algorithm mode: {args.self_certified_algorithm}  '
                 )
     logging.info('Number of parameters: %d', sum([p.data.nelement() for p in runmodel.model.parameters()]) // args.k)
 

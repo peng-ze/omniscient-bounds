@@ -74,6 +74,8 @@ parser.add_argument("--training-data-usage", type=float, default=1.0, help="Port
 parser.add_argument("--no-population-Hessian", action="store_true", help="Do not use population Hessian when estimating existing bounds.")
 parser.add_argument("--existing-bounds-only", action="store_true", help="Only estimate existing bounds.")
 
+parser.add_argument("--self-certified-algorithm", action="store_true", help="Self-certified algorithm mode.")
+
 default_optimizer = {
     'fc1': 'SGD',
     'resnet': 'SGD',
@@ -109,6 +111,9 @@ def format_experiment_name(args):
         name += '_depth{0}'.format(args.depth)
     if args.training_data_usage < 1.0:
         name += '_train{0}'.format(args.training_data_usage)
+
+    if args.self_certified_algorithm:
+        name += '_algorithm'
 
     return name
 
