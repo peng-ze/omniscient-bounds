@@ -26,7 +26,7 @@ def average_hessian_trace(clip, model, dataloader: DataLoader):
 
 def average_hessian_product(clip, model, dataloader: DataLoader, v):
     clean_cache()
-    res = hessian(model, criterion=ClippedCrossEntropyLoss(clip), dataloader=dataloader, cuda=True).dataloader_hv_product(v)
+    res = hessian(model, criterion=ClippedCrossEntropyLoss(clip), dataloader=dataloader, cuda=True).dataloader_hv_product(v)[1]
     clean_cache()
     return res
     res = None
@@ -273,9 +273,9 @@ class TerminalDispersionBound(Bound):
     def approximate_gamma(self, delta: 'list[Tensor]', model: nn.Module, loader: DataLoader):
         hd = average_hessian_product(self.clip, model, loader, delta)
         dhd = _inner_product(delta, hd)
-        g = self.gradients(ParallelModel(lambda: model, k=1), loader)
+        g = self.gradients(ParallelModel(lambda: model, k=1), loader)[0]
         gd = _inner_product(delta, g)
-        return gd + dhd / 2
+        return gd, dhd/2
 
 
     def punishment(self, Delta: 'list[list[Tensor]]', parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val2_data_loader: DataLoader, extra_res:dict[str]=None):
@@ -298,6 +298,8 @@ class TerminalDispersionBound(Bound):
                     if 'population_loss' not in extra_res:
                         extra_res['population_loss'] = []
                     if 'approximate_empirical_delta' not in extra_res:
+                        extra_res['approximate_empirical_delta_first'] = []
+                        extra_res['approximate_empirical_delta_second'] = []
                         extra_res['approximate_empirical_delta'] = []
                     with BackupModelParams(model):
                         with torch.no_grad():
@@ -305,13 +307,18 @@ class TerminalDispersionBound(Bound):
                                 p.data += d
                             loss = self.loss(model, val2_data_loader)
                     extra_res['population_loss'].append(loss.reshape(-1))
-                    extra_res['approximate_empirical_delta'].append(self.approximate_gamma(delta, model, empirical_loader).reshape(-1))
+                    first, second = self.approximate_gamma(delta, model, SelectedDataFieldDataLoader(empirical_loader, data_field=[0, 1]))
+                    extra_res['approximate_empirical_delta_first'].append(first.reshape(-1))
+                    extra_res['approximate_empirical_delta_second'].append(second.reshape(-1))
+                    extra_res['approximate_empirical_delta'].append((first + second).reshape(-1))
 
             clean_cache()
 
         if extra_res is not None and self.self_certified_algorithm:
             extra_res['population_loss'] = float(torch.cat(extra_res['population_loss']).mean())
             extra_res['approximate_empirical_delta'] = float(torch.cat(extra_res['approximate_empirical_delta']).mean())
+            extra_res['approximate_empirical_delta_first'] = float(torch.cat(extra_res['approximate_empirical_delta_first']).mean())
+            extra_res['approximate_empirical_delta_second'] = float(torch.cat(extra_res['approximate_empirical_delta_second']).mean())
 
         return torch.stack(delta_losses).mean(),  torch.stack(hessian_traces).mean()
 
