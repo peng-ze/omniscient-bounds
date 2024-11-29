@@ -143,7 +143,7 @@ class _SelectedDataFieldDataLoaderIter:
         data = list(data)
         return (data[i] for i in self.data_field)
 class SelectedDataFieldDataLoader:
-    def __init__(self, loader: ParallelDataloader, data_field='list[int]'):
+    def __init__(self, loader: ParallelDataloader, data_field:'list[int]'):
         self.loader = loader
         self.data_field = data_field
     

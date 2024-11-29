@@ -168,7 +168,7 @@ class RunModel(nn.Module):
                 else:
                     model.apply(weight_init)
             if args.arch == 'resnet':
-                model = resnet.resnet18(width=args.width, depth=args.depth)
+                model = resnet.resnet18(width=args.width, depth=args.depth, activation_name=args.activation_name)
                 model.apply(weight_init)
             if args.arch == 'vgg':
                 model = vgg.vgg11()

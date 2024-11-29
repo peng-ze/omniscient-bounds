@@ -75,6 +75,9 @@ parser.add_argument("--no-population-Hessian", action="store_true", help="Do not
 parser.add_argument("--existing-bounds-only", action="store_true", help="Only estimate existing bounds.")
 
 parser.add_argument("--self-certified-algorithm", action="store_true", help="Self-certified algorithm mode.")
+parser.add_argument("--activation-name", type=str, default='relu')
+
+parser.add_argument("--debug", action="store_true")
 
 default_optimizer = {
     'fc1': 'SGD',
@@ -115,12 +118,30 @@ def format_experiment_name(args):
     if args.self_certified_algorithm:
         name += '_algorithm'
 
+    if args.activation_name.lower() != 'relu':
+        activation_name = args.activation_name.lower()
+        name += f'_{activation_name}'
+
     return name
+
+def _debugging(args):
+    args.name = 'debug'
+    args.training_data_usage = 0.1
+    args.tolerance = 1
+    args.epochs = 1
+    args.traj_reweight = []
+    args.dont_repeat = False
+
+    return args
 
 
 def parse_args():
     import random
     args = parser.parse_args()
+
+    if args.debug:
+        args = _debugging(args)
+
     if args.seed is None or args.seed < 0:
         args.seed  = random.randint(0, 100000)
     if args.bound_freq <= 0:

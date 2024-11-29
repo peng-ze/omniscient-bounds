@@ -24,6 +24,27 @@ def average_hessian_trace(clip, model, dataloader: DataLoader):
         clean_cache()
     return trace_sum / count
 
+def average_hessian_product(clip, model, dataloader: DataLoader, v):
+    clean_cache()
+    res = hessian(model, criterion=ClippedCrossEntropyLoss(clip), dataloader=dataloader, cuda=True).dataloader_hv_product(v)
+    clean_cache()
+    return res
+    res = None
+    count = 0
+    for X, Y in tqdm(dataloader, "Computint HVP"):
+        model.zero_grad(True)
+        h = hessian(model, criterion=ClippedCrossEntropyLoss(clip), data=(X, Y), cuda=True)
+        hvp = HVP([(h, 1)], v)
+        len_y = len(Y)
+        count += len_y
+        if res is None:
+            res = [p * len_y for p in hvp]
+        else:
+            res = [r + p * len_y for (r, p) in zip(res, hvp)]
+        clean_cache()
+    return [r / count for r in res] 
+    
+
 
 class Bound(nn.Module):
     name: str = None
@@ -249,6 +270,13 @@ class TerminalDispersionBound(Bound):
         return loss_delta - loss0, hessian_trace
 
 
+    def approximate_gamma(self, delta: 'list[Tensor]', model: nn.Module, loader: DataLoader):
+        hd = average_hessian_product(self.clip, model, loader, delta)
+        dhd = _inner_product(delta, hd)
+        g = self.gradients(ParallelModel(lambda: model, k=1), loader)
+        gd = _inner_product(delta, g)
+        return gd + dhd / 2
+
 
     def punishment(self, Delta: 'list[list[Tensor]]', parallel_model: ParallelModel, parallel_training_data_loader: ParallelDataloader, val2_data_loader: DataLoader, extra_res:dict[str]=None):
         clean_cache()
@@ -269,17 +297,22 @@ class TerminalDispersionBound(Bound):
                 if extra_res is not None:
                     if 'population_loss' not in extra_res:
                         extra_res['population_loss'] = []
+                    if 'approximate_empirical_delta' not in extra_res:
+                        extra_res['approximate_empirical_delta'] = []
                     with BackupModelParams(model):
                         with torch.no_grad():
                             for (d, p) in zip(delta, model.parameters()):
                                 p.data += d
                             loss = self.loss(model, val2_data_loader)
                     extra_res['population_loss'].append(loss.reshape(-1))
+                    extra_res['approximate_empirical_delta'].append(self.approximate_gamma(delta, model, empirical_loader).reshape(-1))
+
+            clean_cache()
 
         if extra_res is not None and self.self_certified_algorithm:
             extra_res['population_loss'] = float(torch.cat(extra_res['population_loss']).mean())
+            extra_res['approximate_empirical_delta'] = float(torch.cat(extra_res['approximate_empirical_delta']).mean())
 
-            clean_cache()
         return torch.stack(delta_losses).mean(),  torch.stack(hessian_traces).mean()
 
     @torch.no_grad()
