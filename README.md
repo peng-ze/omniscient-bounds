@@ -1,9 +1,9 @@
 # Leveraging Flatness to Improve Information-Theoretic Generalization Bounds for SGD
 
-This repo stores the codes for the ICLR 2025 paper "Leveraging Flatness to Improve Information-Theoretic Generalization Bounds for SGD".
+This repo stores the codes for the ICLR 2025 paper "[Leveraging Flatness to Improve Information-Theoretic Generalization Bounds for SGD](https://openreview.net/forum?id=pSdE7PIA64)".
 
 The code is modified from the supplementary materials of 
-[On the Generalization of Neural Networks Trained with SGD: Information-Theoretical Bounds and Implications](https://openreview.net/forum?id=4i23Bjlh4Y9)
+"[On the Generalization of Neural Networks Trained with SGD: Information-Theoretical Bounds and Implications](https://openreview.net/forum?id=4i23Bjlh4Y9)"
 
 
 ## Requirements
